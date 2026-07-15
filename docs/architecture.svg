@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1050" viewBox="0 0 1600 1050" role="img" aria-labelledby="title description">
+  <title id="title">Secure S3 line processor architecture</title>
+  <desc id="description">Runtime S3 to Lambda processing and GitHub OIDC deployment flows.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+    <style>
+      .title{font:700 30px Arial,sans-serif;fill:#0f172a}.subtitle{font:16px Arial,sans-serif;fill:#475569}.lane{fill:#f8fafc;stroke:#94a3b8;stroke-width:2}.account{fill:#eff6ff;stroke:#2563eb;stroke-width:3}.box{fill:#fff;stroke:#334155;stroke-width:2;rx:12}.aws{fill:#fff7ed;stroke:#ea580c;stroke-width:2}.policy{fill:#fef2f2;stroke:#dc2626;stroke-width:2}.iam{fill:#faf5ff;stroke:#9333ea;stroke-width:2}.external{fill:#f0fdf4;stroke:#16a34a;stroke-width:2}.text{font:600 15px Arial,sans-serif;fill:#0f172a;text-anchor:middle}.small{font:13px Arial,sans-serif;fill:#334155;text-anchor:middle}.note{font:13px Arial,sans-serif;fill:#334155}.flow{fill:none;stroke:#334155;stroke-width:2.5;marker-end:url(#arrow)}.deploy{fill:none;stroke:#64748b;stroke-width:2.5;stroke-dasharray:9 7;marker-end:url(#arrow)}.assoc{fill:none;stroke:#64748b;stroke-width:2;stroke-dasharray:5 5}
+    </style>
+  </defs>
+  <rect width="1600" height="1050" fill="#ffffff"/>
+  <text class="title" x="40" y="48">Secure S3 Line Processor</text>
+  <text class="subtitle" x="40" y="75">Direct, least-privilege runtime flow with protected GitHub OIDC deployment</text>
+  <rect class="account" x="650" y="95" width="900" height="895" rx="18"/>
+  <text class="text" x="760" y="125">AWS account</text>
+  <rect class="lane" x="25" y="150" width="1500" height="510" rx="14"/>
+  <text class="text" x="105" y="182">Runtime lane</text>
+  <rect class="lane" x="25" y="700" width="1500" height="240" rx="14"/>
+  <text class="text" x="120" y="732">Deployment lane</text>
+
+  <rect class="external" x="45" y="270" width="170" height="90" rx="12"/>
+  <text class="text" x="130" y="305">Uploader or</text><text class="text" x="130" y="328">AWS CLI</text>
+  <rect class="aws" x="700" y="260" width="190" height="105" rx="12"/>
+  <text class="text" x="795" y="300">Private S3</text><text class="text" x="795" y="323">input bucket</text>
+  <rect class="aws" x="940" y="270" width="175" height="85" rx="12"/>
+  <text class="text" x="1028" y="302">ObjectCreated</text><text class="text" x="1028" y="325">notification</text>
+  <rect class="aws" x="1160" y="260" width="190" height="105" rx="12"/>
+  <text class="text" x="1255" y="300">Python 3.14</text><text class="text" x="1255" y="323">Lambda</text>
+  <rect class="aws" x="1390" y="270" width="115" height="85" rx="12"/>
+  <text class="text" x="1448" y="302">CloudWatch</text><text class="text" x="1448" y="325">Logs</text>
+
+  <path class="flow" d="M215 315 H690"/>
+  <text class="small" x="455" y="278">HTTPS / TLS · PutObject</text><text class="small" x="455" y="298">incoming/*.json</text>
+  <path class="flow" d="M890 312 H930"/>
+  <text class="small" x="910" y="235">AWS service</text><text class="small" x="910" y="252">integration</text>
+  <path class="flow" d="M1115 312 H1150"/>
+  <path class="flow" d="M1350 312 H1380"/>
+  <text class="small" x="1415" y="245">Structured execution logs</text>
+  <path class="flow" d="M1255 365 V430 H795 V375"/>
+  <text class="small" x="1025" y="418">HTTPS AWS API · GetObject / GetObjectVersion</text>
+
+  <rect class="policy" x="710" y="400" width="170" height="65" rx="10"/>
+  <text class="text" x="795" y="426">Bucket policy</text><text class="small" x="795" y="448">Deny insecure transport</text>
+  <path class="assoc" d="M795 400 V365"/>
+  <rect class="iam" x="1170" y="400" width="170" height="65" rx="10"/>
+  <text class="text" x="1255" y="426">Execution role</text><text class="small" x="1255" y="448">Read incoming/* only</text>
+  <path class="assoc" d="M1255 400 V365"/>
+
+  <rect class="box" x="680" y="500" width="230" height="125" rx="10"/>
+  <text class="note" x="700" y="527">S3 security</text><text class="note" x="700" y="550">Block Public Access · SSE-S3</text><text class="note" x="700" y="573">Versioning · bucket-owner enforced</text><text class="note" x="700" y="596">Deny insecure transport</text><text class="note" x="700" y="619">RETAIN on stack deletion</text>
+  <rect class="box" x="1135" y="500" width="245" height="125" rx="10"/>
+  <text class="note" x="1155" y="527">Lambda / IAM</text><text class="note" x="1155" y="550">Python 3.14 · ARM64</text><text class="note" x="1155" y="573">256 MB · 15 seconds</text><text class="note" x="1155" y="596">Read incoming/* only · no writes</text><text class="note" x="1155" y="619">No VPC</text>
+
+  <rect class="external" x="45" y="785" width="135" height="70" rx="10"/><text class="text" x="112" y="826">Developer</text>
+  <rect class="external" x="235" y="785" width="145" height="70" rx="10"/><text class="text" x="308" y="815">GitHub</text><text class="text" x="308" y="837">repository</text>
+  <rect class="external" x="435" y="770" width="175" height="100" rx="10"/><text class="text" x="523" y="803">GitHub Actions</text><text class="small" x="523" y="827">production environment</text><text class="small" x="523" y="849">manual dispatch</text>
+  <rect class="iam" x="700" y="775" width="190" height="90" rx="10"/><text class="text" x="795" y="811">GitHubCdk</text><text class="text" x="795" y="834">DeployRole</text>
+  <rect class="aws" x="955" y="770" width="220" height="100" rx="10"/><text class="text" x="1065" y="804">CDK bootstrap roles</text><text class="text" x="1065" y="827">/ CloudFormation</text>
+  <rect class="aws" x="1240" y="785" width="190" height="70" rx="10"/><text class="text" x="1335" y="826">Application stack</text>
+  <path class="deploy" d="M180 820 H225"/><text class="small" x="203" y="765">push</text>
+  <path class="deploy" d="M380 820 H425"/><text class="small" x="403" y="765">workflow_dispatch</text>
+  <path class="deploy" d="M610 820 H690"/><text class="small" x="650" y="800">OIDC</text>
+  <path class="deploy" d="M890 820 H945"/><text class="small" x="918" y="790">temporary credentials</text>
+  <path class="deploy" d="M1175 820 H1230"/><text class="small" x="1203" y="790">deploy</text>
+</svg>
