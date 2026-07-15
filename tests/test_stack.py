@@ -80,9 +80,10 @@ def test_bucket_policy_denies_insecure_transport_for_bucket_and_objects(
 ) -> None:
     policies = resources_of_type(synthesized_template, "AWS::S3::BucketPolicy")
     assert len(policies) == 1
-    statements = next(iter(policies.values()))["Properties"]["PolicyDocument"][
-        "Statement"
-    ]
+    policy = next(iter(policies.values()))
+    assert policy["DeletionPolicy"] == "Retain"
+    assert policy["UpdateReplacePolicy"] == "Retain"
+    statements = policy["Properties"]["PolicyDocument"]["Statement"]
     deny = next(
         statement
         for statement in statements

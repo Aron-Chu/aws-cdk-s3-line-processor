@@ -43,6 +43,9 @@ class S3LineProcessorStack(Stack):
                 conditions={"Bool": {"aws:SecureTransport": "false"}},
             )
         )
+        if bucket.policy is None:
+            raise TypeError("InputBucket policy must be created")
+        bucket.policy.apply_removal_policy(RemovalPolicy.RETAIN)
 
         log_group = logs.LogGroup(
             self,
