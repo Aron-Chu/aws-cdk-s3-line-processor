@@ -225,6 +225,16 @@ def test_handler_reports_permanent_validation_failure_and_continues(
             },
             "invalid_s3_record",
         ),
+        (
+            {
+                "eventSource": "aws:s3",
+                "s3": {
+                    "bucket": {"name": "input-bucket"},
+                    "object": {"key": "incoming/a.json", "versionId": 7},
+                },
+            },
+            "invalid_s3_record",
+        ),
         ("not-a-record", "invalid_s3_record"),
     ],
 )
@@ -260,10 +270,9 @@ def test_handler_propagates_s3_operational_failures(
 def test_handler_logs_safe_success_metadata_without_uploaded_values(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
+    uploaded_field = "private_customer_identifier"
     uploaded_value = "TOP-SECRET-UPLOADED-VALUE"
-    client = FakeS3Client(
-        [json.dumps({"event_id": "one", "message": uploaded_value}).encode()]
-    )
+    client = FakeS3Client([json.dumps({uploaded_field: uploaded_value}).encode()])
     monkeypatch.setattr(handler, "s3_client", client)
 
     handler.lambda_handler(
@@ -273,10 +282,11 @@ def test_handler_logs_safe_success_metadata_without_uploaded_values(
 
     log_message = caplog.records[-1].message
     logged = json.loads(log_message)
+    assert uploaded_field not in log_message
     assert uploaded_value not in log_message
     assert logged["status"] == "processed"
-    assert logged["top_level_fields"] == ["event_id", "message"]
-    assert logged["parsed_field_count"] == 2
+    assert "top_level_fields" not in logged
+    assert logged["parsed_field_count"] == 1
     assert logged["request_id"] == "request-9"
 
 

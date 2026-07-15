@@ -81,6 +81,8 @@ def process_s3_record(record: dict[str, Any]) -> dict[str, Any]:
     version_id = object_record.get("versionId")
     if version_id == "null":
         version_id = None
+    elif version_id is not None and not isinstance(version_id, str):
+        raise ValidationError("invalid_s3_record")
     object_context = {
         "bucket": bucket_name,
         "key": object_key,
@@ -124,7 +126,6 @@ def process_s3_record(record: dict[str, Any]) -> dict[str, Any]:
         "status": "processed",
         **object_context,
         "parsed_field_count": len(parsed),
-        "top_level_fields": sorted(parsed),
     }
 
 

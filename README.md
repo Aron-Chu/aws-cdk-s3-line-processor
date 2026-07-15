@@ -8,6 +8,7 @@ custom framework.
 ![Secure S3 line processor architecture](docs/architecture.svg)
 
 The editable source is [docs/architecture.excalidraw](docs/architecture.excalidraw).
+AWS service marks use the official AWS Architecture Icons.
 
 ## How it works
 
@@ -73,8 +74,8 @@ The `samples/` directory includes valid, malformed, and multiline examples.
 - Lambda runs outside a VPC because it only calls public AWS service APIs. A
   VPC would add networking complexity and could require NAT or endpoints
   without reducing the current attack surface.
-- Logs contain object identity, size, validation status, field names, and
-  field count, but never complete uploaded content or parsed values.
+- Logs contain object identity, size, validation status, and field count, but
+  never uploaded field names, complete content, or parsed values.
 - Runtime IAM is separate from deployment IAM. The Lambda role reads input;
   `GitHubCdkDeployRole` deploys infrastructure and is not created here.
 
@@ -294,10 +295,10 @@ the function. Do not rely on `Content-Type`; the function validates bytes.
 aws logs tail /aws/lambda/FUNCTION_NAME --since 10m --follow
 ```
 
-A successful log entry includes `status: processed`, object metadata,
-`parsed_field_count`, and `top_level_fields`. A permanent invalid input has
-`status: rejected` and a safe `reason_code`. Operational failures are raised
-after safe context is logged.
+A successful log entry includes `status: processed`, object metadata, and
+`parsed_field_count`. A permanent invalid input has `status: rejected` and a
+safe `reason_code`. Operational failures are raised after safe context is
+logged.
 
 ## Maintenance
 
@@ -356,9 +357,9 @@ Inspect and explicitly remove every retained version before deleting the
 bucket:
 
 ```bash
-aws s3api list-object-versions --bucket BUCKET_NAME
-aws s3api delete-object --bucket BUCKET_NAME --key OBJECT_KEY --version-id VERSION_ID
-aws s3api delete-bucket --bucket BUCKET_NAME
+aws s3api list-object-versions --bucket BUCKET_NAME --profile DEPLOY_PROFILE
+aws s3api delete-object --bucket BUCKET_NAME --key OBJECT_KEY --version-id VERSION_ID --profile DEPLOY_PROFILE
+aws s3api delete-bucket --bucket BUCKET_NAME --profile DEPLOY_PROFILE
 ```
 
 Repeat `delete-object` for all versions and delete markers. Confirm the bucket

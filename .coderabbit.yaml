@@ -11,6 +11,9 @@ reviews:
     drafts: false
     base_branches:
       - main
+  pre_merge_checks:
+    docstrings:
+      mode: off
   path_filters:
     - "!cdk.out/**"
     - "!coverage/**"
@@ -20,6 +23,7 @@ reviews:
     - "!docs/architecture.svg"
     - "!docs/architecture.excalidraw"
     - "!package-lock.json"
+    - "!samples/invalid-json.json"
   path_instructions:
     - path: "s3_line_processor/**/*.py"
       instructions: |

@@ -127,14 +127,19 @@ def test_s3_notification_has_expected_event_prefix_and_suffix(
     bucket = next(
         iter(resources_of_type(synthesized_template, "AWS::S3::Bucket").values())
     )
-    notification = bucket["Properties"]["NotificationConfiguration"][
+    configurations = bucket["Properties"]["NotificationConfiguration"][
         "LambdaConfigurations"
-    ][0]
+    ]
+    assert len(configurations) == 1
+
+    notification = configurations[0]
     rules = notification["Filter"]["S3Key"]["Rules"]
 
     assert notification["Event"] == "s3:ObjectCreated:*"
-    assert {"Name": "prefix", "Value": "incoming/"} in rules
-    assert {"Name": "suffix", "Value": ".json"} in rules
+    assert rules == [
+        {"Name": "prefix", "Value": "incoming/"},
+        {"Name": "suffix", "Value": ".json"},
+    ]
 
 
 def test_lambda_s3_permissions_are_read_only_and_prefix_restricted(
