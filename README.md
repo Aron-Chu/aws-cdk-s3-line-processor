@@ -296,7 +296,11 @@ after safe context is logged.
 Dependency updates:
 
 - Dependabot opens small weekly grouped PRs for pip, npm, and GitHub Actions.
-- CodeRabbit provides advisory review; CI remains authoritative.
+- Dependabot alerts, security updates, secret scanning, and push protection
+  should remain enabled in repository security settings.
+- CodeRabbit automatically reviews non-draft pull requests to `main` using the
+  security-focused rules in `.coderabbit.yaml`. Install the CodeRabbit GitHub
+  App with access limited to this repository; CI remains authoritative.
 - Keep exact pins and regenerate `package-lock.json` with `npm install` after
   changing the CDK CLI.
 - After every update, run Ruff, Pytest, `npx cdk synth`, and an authenticated
