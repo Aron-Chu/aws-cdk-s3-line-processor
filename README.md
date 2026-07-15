@@ -122,6 +122,7 @@ Generated CloudFormation in `cdk.out/` is intentionally ignored.
 - `constructs`: 10.7.0
 - AWS CDK CLI: 2.1131.0
 - Boto3 for local development and tests: 1.43.49
+- pre-commit: 4.6.0
 - Ruff: 0.15.21
 - Pytest: 9.1.1
 - Pytest-cov: 7.1.0
@@ -158,6 +159,7 @@ python3.14 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 npm ci
+pre-commit install
 ```
 
 PowerShell:
@@ -167,16 +169,22 @@ py -3.14 -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -r requirements-dev.txt
 npm ci
+pre-commit install
 ```
 
 ## Formatting, linting, and tests
 
 ```bash
+pre-commit run --all-files
 ruff format .
 ruff format --check .
 ruff check .
 pytest
 ```
+
+The installed hook runs file hygiene checks, Ruff fixes and formatting, and
+Gitleaks against staged changes. Full tests and CDK synthesis remain explicit
+CI checks so routine commits stay fast.
 
 Pytest is configured to report branch-aware coverage for the Lambda and CDK
 packages. Tests use mocks and CDK assertions and require no AWS credentials.
@@ -301,6 +309,8 @@ Dependency updates:
 - CodeRabbit automatically reviews non-draft pull requests to `main` using the
   security-focused rules in `.coderabbit.yaml`. Install the CodeRabbit GitHub
   App with access limited to this repository; CI remains authoritative.
+- Update pinned hook revisions deliberately with `pre-commit autoupdate`, then
+  run `pre-commit run --all-files` before committing the result.
 - Keep exact pins and regenerate `package-lock.json` with `npm install` after
   changing the CDK CLI.
 - After every update, run Ruff, Pytest, `npx cdk synth`, and an authenticated
