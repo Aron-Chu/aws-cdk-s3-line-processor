@@ -135,15 +135,17 @@ def test_process_decodes_spaces_and_literal_plus_and_uses_version(
     assert client.bodies[0].closed is True
 
 
-def test_process_omits_version_id_when_event_has_none(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("version_id", [None, "null"])
+def test_process_omits_missing_or_null_version_id(
+    version_id: str | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client = FakeS3Client([b'{"message":"ok"}'])
     monkeypatch.setattr(handler, "s3_client", client)
 
-    handler.process_s3_record(make_record(version_id=None))
+    result = handler.process_s3_record(make_record(version_id=version_id))
 
     assert client.calls == [{"Bucket": "input-bucket", "Key": "incoming/valid.json"}]
+    assert result["version_id"] is None
 
 
 def test_handler_processes_multiple_records(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -278,3 +280,21 @@ def test_handler_rejects_reported_or_content_length_over_limit(
 def test_handler_requires_non_empty_records(event: dict) -> None:
     with pytest.raises(ValueError, match="Records must be a non-empty list"):
         handler.lambda_handler(event, SimpleNamespace(aws_request_id="request-1"))
+
+
+def test_handler_ignores_s3_test_event(caplog: pytest.LogCaptureFixture) -> None:
+    response = handler.lambda_handler(
+        {"Service": "Amazon S3", "Event": "s3:TestEvent"},
+        SimpleNamespace(aws_request_id="request-1"),
+    )
+
+    assert response == {
+        "results": [
+            {
+                "status": "ignored",
+                "event_type": "s3:TestEvent",
+                "request_id": "request-1",
+            }
+        ]
+    }
+    assert json.loads(caplog.records[-1].message)["status"] == "ignored"

@@ -24,7 +24,8 @@ The editable source is [docs/architecture.excalidraw](docs/architecture.excalidr
 Every record in a notification is processed. Permanent input errors are logged
 as `rejected` and do not cause retries. S3 access failures, missing objects,
 service errors, and unexpected failures are logged with safe context and
-raised so AWS can retry them.
+raised so AWS can retry them. S3 notification test events are logged and
+ignored without attempting an object read.
 
 ## Input contract
 
@@ -117,8 +118,8 @@ Generated CloudFormation in `cdk.out/` is intentionally ignored.
 - AWS Lambda runtime: Python 3.14
 - `aws-cdk-lib`: 2.261.0
 - `constructs`: 10.7.0
-- AWS CDK CLI: 2.1128.1
-- Boto3 for local development and tests: 1.43.48
+- AWS CDK CLI: 2.1131.0
+- Boto3 for local development and tests: 1.43.49
 - Ruff: 0.15.21
 - Pytest: 9.1.1
 - Pytest-cov: 7.1.0
@@ -251,7 +252,8 @@ without requesting an OIDC token or touching AWS.
 The deployment workflow runs only through `workflow_dispatch`, requires the
 `production` environment, verifies the default branch, reruns all checks,
 assumes `GitHubCdkDeployRole` through OIDC, displays `cdk diff`, and deploys
-without a second interactive prompt after environment approval.
+without a second interactive prompt after environment approval. A production
+concurrency group prevents overlapping CloudFormation deployments.
 
 Manual GitHub prerequisites:
 
@@ -316,9 +318,10 @@ editable source.
 
 ## Cleanup
 
-Preview destruction first:
+Review the current stack diff, then destroy application resources:
 
 ```bash
+npx cdk diff --profile DEPLOY_PROFILE
 npx cdk destroy --profile DEPLOY_PROFILE
 ```
 

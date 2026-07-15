@@ -76,10 +76,13 @@ def process_s3_record(record: dict[str, Any]) -> dict[str, Any]:
         raise ValidationError("invalid_s3_record")
 
     object_key = unquote_plus(encoded_key)
+    version_id = object_record.get("versionId")
+    if version_id == "null":
+        version_id = None
     object_context = {
         "bucket": bucket_name,
         "key": object_key,
-        "version_id": object_record.get("versionId"),
+        "version_id": version_id,
         "etag": object_record.get("eTag"),
         "sequencer": object_record.get("sequencer"),
         "reported_object_size": object_record.get("size"),
@@ -93,7 +96,6 @@ def process_s3_record(record: dict[str, Any]) -> dict[str, Any]:
         raise ValidationError("object_too_large", object_context)
 
     get_object_parameters = {"Bucket": bucket_name, "Key": object_key}
-    version_id = object_record.get("versionId")
     if version_id:
         get_object_parameters["VersionId"] = version_id
 
@@ -125,11 +127,18 @@ def process_s3_record(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+    request_id = getattr(context, "aws_request_id", None)
+    if isinstance(event, dict) and event.get("Event") == "s3:TestEvent":
+        result = {"status": "ignored", "event_type": "s3:TestEvent"}
+        if request_id:
+            result["request_id"] = request_id
+        logger.info(_serialize_log(result))
+        return {"results": [result]}
+
     records = event.get("Records") if isinstance(event, dict) else None
     if not isinstance(records, list) or not records:
         raise ValueError("Records must be a non-empty list")
 
-    request_id = getattr(context, "aws_request_id", None)
     results = []
 
     for record in records:
