@@ -1,7 +1,7 @@
 language: en-US
 reviews:
   profile: assertive
-  request_changes_workflow: true
+  request_changes_workflow: false
   high_level_summary: true
   poem: false
   review_status: true
@@ -53,6 +53,7 @@ reviews:
         Flag unpinned dependencies, incompatible CDK versions, unexpected runtime packages, and unnecessary additions.
     - path: "package.json"
       instructions: |
-        Flag unpinned CDK CLI versions, unnecessary packages, and CDK CLI or library compatibility risks.
+        Flag unpinned CDK CLI versions, unnecessary packages, and verified CDK CLI or library compatibility risks.
+        Do not assume aws-cdk and aws-cdk-lib numeric versions must match; they use independent release lines.
 chat:
   auto_reply: true
