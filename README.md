@@ -65,7 +65,9 @@ The `samples/` directory includes valid, malformed, and multiline examples.
   does not silently remove stored data or its HTTPS guardrail.
 - Lambda receives only `s3:GetObject` and `s3:GetObjectVersion` on
   `incoming/*`. It has no S3 write permission.
-- The generated execution role trusts only `lambda.amazonaws.com`.
+- The execution role trusts only `lambda.amazonaws.com`, uses no managed
+  policies, and can create streams and write events only in its dedicated log
+  group.
 - S3 invocation permission is constrained by source bucket ARN and source
   account.
 - Lambda runs outside a VPC because it only calls public AWS service APIs. A
@@ -318,9 +320,15 @@ editable source.
 
 ## Cleanup
 
-Review the current stack diff, then destroy application resources:
+The bucket is retained, so clear its Lambda notification before destroying the
+function. Otherwise the retained configuration keeps targeting a deleted
+function:
 
 ```bash
+aws s3api put-bucket-notification-configuration \
+  --bucket BUCKET_NAME \
+  --notification-configuration '{}' \
+  --profile DEPLOY_PROFILE
 npx cdk diff --profile DEPLOY_PROFILE
 npx cdk destroy --profile DEPLOY_PROFILE
 ```
@@ -353,6 +361,9 @@ name and target account before any destructive command.
   bounded read.
 - The generated bucket naming scheme permits one copy of this stack per
   account and region.
+- A fresh deployment with the same stack identity cannot create the
+  deterministically named retained bucket. Delete the retained bucket after
+  emptying all versions, or explicitly import it into the replacement stack.
 
 ## Production considerations and tradeoffs
 

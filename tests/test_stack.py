@@ -174,9 +174,8 @@ def test_lambda_role_trusts_only_lambda_service(
 ) -> None:
     roles = resources_of_type(synthesized_template, "AWS::IAM::Role")
     assert len(roles) == 1
-    trust_statements = next(iter(roles.values()))["Properties"][
-        "AssumeRolePolicyDocument"
-    ]["Statement"]
+    role_properties = next(iter(roles.values()))["Properties"]
+    trust_statements = role_properties["AssumeRolePolicyDocument"]["Statement"]
 
     assert trust_statements == [
         {
@@ -185,6 +184,23 @@ def test_lambda_role_trusts_only_lambda_service(
             "Principal": {"Service": "lambda.amazonaws.com"},
         }
     ]
+    assert "ManagedPolicyArns" not in role_properties
+
+
+def test_lambda_logging_permissions_are_scoped_to_its_log_group(
+    synthesized_template: dict[str, Any],
+) -> None:
+    log_statements = [
+        statement
+        for statement in policy_statements(synthesized_template)
+        if any(action.startswith("logs:") for action in actions_for(statement))
+    ]
+
+    assert len(log_statements) == 1
+    statement = log_statements[0]
+    assert actions_for(statement) == {"logs:CreateLogStream", "logs:PutLogEvents"}
+    assert statement["Resource"] != "*"
+    assert "ProcessorLogGroup" in json.dumps(statement["Resource"])
 
 
 def test_s3_invocation_permission_is_constrained_to_source_bucket(

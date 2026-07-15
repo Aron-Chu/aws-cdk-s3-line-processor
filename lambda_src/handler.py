@@ -61,6 +61,8 @@ def _reject_json_constant(value: str) -> None:
 
 
 def process_s3_record(record: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(record, dict):
+        raise ValidationError("invalid_s3_record")
     if record.get("eventSource") != "aws:s3":
         raise ValidationError("unexpected_event_source")
 

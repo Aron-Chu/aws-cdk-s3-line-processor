@@ -213,6 +213,37 @@ def test_handler_reports_permanent_validation_failure_and_continues(
     assert response["results"][1]["status"] == "processed"
 
 
+@pytest.mark.parametrize(
+    ("record", "reason_code"),
+    [
+        ({"eventSource": "aws:sns"}, "unexpected_event_source"),
+        ({"eventSource": "aws:s3", "s3": {}}, "invalid_s3_record"),
+        (
+            {
+                "eventSource": "aws:s3",
+                "s3": {"bucket": {"name": 7}, "object": {"key": "incoming/a.json"}},
+            },
+            "invalid_s3_record",
+        ),
+        ("not-a-record", "invalid_s3_record"),
+    ],
+)
+def test_handler_rejects_malformed_records_without_s3_read(
+    record: object, reason_code: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = FakeS3Client([])
+    monkeypatch.setattr(handler, "s3_client", client)
+
+    response = handler.lambda_handler(
+        {"Records": [record]},
+        SimpleNamespace(aws_request_id="request-1"),
+    )
+
+    assert response["results"][0]["status"] == "rejected"
+    assert response["results"][0]["reason_code"] == reason_code
+    assert client.calls == []
+
+
 def test_handler_propagates_s3_operational_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

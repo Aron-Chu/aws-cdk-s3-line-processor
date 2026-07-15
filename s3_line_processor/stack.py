@@ -1,4 +1,13 @@
-from aws_cdk import Aws, CfnOutput, Duration, Names, RemovalPolicy, Stack, Tags
+from aws_cdk import (
+    Aws,
+    CfnOutput,
+    Duration,
+    IgnoreMode,
+    Names,
+    RemovalPolicy,
+    Stack,
+    Tags,
+)
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
@@ -54,24 +63,40 @@ class S3LineProcessorStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
+        processor_role = iam.Role(
+            self,
+            "ProcessorRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+        )
+        processor_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["logs:CreateLogStream", "logs:PutLogEvents"],
+                resources=[f"{log_group.log_group_arn}:*"],
+            )
+        )
+        processor_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject", "s3:GetObjectVersion"],
+                resources=[f"{bucket_arn}/incoming/*"],
+            )
+        )
+
         processor = lambda_.Function(
             self,
             "Processor",
             runtime=lambda_.Runtime.PYTHON_3_14,
             architecture=lambda_.Architecture.ARM_64,
-            code=lambda_.Code.from_asset("lambda_src"),
+            code=lambda_.Code.from_asset(
+                "lambda_src",
+                exclude=["__init__.py", "__pycache__/**", "*.pyc"],
+                ignore_mode=IgnoreMode.GLOB,
+            ),
             handler="handler.lambda_handler",
             memory_size=256,
             timeout=Duration.seconds(15),
             environment={"MAX_FILE_BYTES": str(1024 * 1024)},
             log_group=log_group,
-        )
-
-        processor.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["s3:GetObject", "s3:GetObjectVersion"],
-                resources=[f"{bucket_arn}/incoming/*"],
-            )
+            role=processor_role,
         )
 
         cfn_bucket = bucket.node.default_child
