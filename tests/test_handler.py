@@ -80,6 +80,8 @@ def test_parse_valid_single_line_object(data: bytes) -> None:
         (b" \t ", "empty_input"),
         (b"\xff", "invalid_utf8"),
         (b'{"event_id":}', "invalid_json"),
+        (b'{"value":NaN}', "invalid_json"),
+        (b'{"value":Infinity}', "invalid_json"),
         (b'{\n  "event_id": "one"\n}', "multiline_input"),
         (b'{"one":1}\n{"two":2}', "multiline_input"),
         (b"[]", "non_object_json"),

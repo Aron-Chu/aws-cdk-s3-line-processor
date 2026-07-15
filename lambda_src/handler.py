@@ -46,14 +46,18 @@ def parse_single_line_json(
         raise ValidationError("multiline_input")
 
     try:
-        parsed = json.loads(line)
-    except json.JSONDecodeError as error:
+        parsed = json.loads(line, parse_constant=_reject_json_constant)
+    except (json.JSONDecodeError, ValueError) as error:
         raise ValidationError("invalid_json") from error
 
     if not isinstance(parsed, dict):
         raise ValidationError("non_object_json")
 
     return parsed
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(value)
 
 
 def process_s3_record(record: dict[str, Any]) -> dict[str, Any]:
