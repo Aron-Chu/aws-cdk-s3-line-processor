@@ -1,0 +1,23 @@
+language: en-US
+reviews:
+  profile: assertive
+  high_level_summary: true
+  poem: false
+  path_filters:
+    - "!cdk.out/**"
+    - "!coverage/**"
+    - "!.coverage"
+    - "!.pytest_cache/**"
+    - "!**/__pycache__/**"
+    - "!docs/architecture.svg"
+    - "!package-lock.json"
+  path_instructions:
+    - path: "s3_line_processor/**/*.py"
+      instructions: |
+        Flag public S3 access, missing encryption or versioning, wildcard IAM allows, Lambda S3 writes, unsafe removal policies, missing HTTPS enforcement, unnecessary services, and broad Lambda invocation permissions.
+    - path: "lambda_src/**/*.py"
+      instructions: |
+        Flag unbounded reads, incorrect S3 key decoding, ignored object versions, raw uploaded-content logging, swallowed operational exceptions, incorrect one-line validation, first-record-only processing, and unnecessary abstractions.
+    - path: ".github/workflows/*.yml"
+      instructions: |
+        Flag broad permissions, long-lived AWS credentials, AWS access in PR validation, PR-triggered deployments, unpinned third-party actions, missing environment protection, and assumptions that permit unrestricted OIDC trust.
