@@ -43,7 +43,13 @@ aws s3 cp samples/valid.json \
   s3://BUCKET_NAME/incoming/example.json \
   --profile OPERATOR_PROFILE
 
-aws logs tail /aws/lambda/FUNCTION_NAME \
+LOG_GROUP=$(aws cloudformation describe-stack-resources \
+  --stack-name S3LineProcessorStack \
+  --query "StackResources[?ResourceType=='AWS::Logs::LogGroup'].PhysicalResourceId | [0]" \
+  --output text \
+  --profile OPERATOR_PROFILE)
+
+aws logs tail "$LOG_GROUP" \
   --since 10m \
   --profile OPERATOR_PROFILE
 ```

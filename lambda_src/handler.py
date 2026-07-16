@@ -191,7 +191,7 @@ def _safe_record_context(record: Any) -> dict[str, Any]:
             "sequencer": object_record.get("sequencer"),
             "reported_object_size": object_record.get("size"),
         }
-    except (KeyError, TypeError):
+    except KeyError, TypeError:
         return {}
 
 

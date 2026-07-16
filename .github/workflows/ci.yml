@@ -42,11 +42,8 @@ jobs:
           python -m venv .venv
           .venv/bin/python -m pip install -r requirements-dev.txt
 
-      - name: Check formatting
-        run: .venv/bin/ruff format --check .
-
-      - name: Lint
-        run: .venv/bin/ruff check .
+      - name: Run pre-commit
+        run: .venv/bin/pre-commit run --all-files
 
       - name: Test
         run: .venv/bin/pytest
