@@ -62,6 +62,7 @@ class S3LineProcessorStack(Stack):
             retention=logs.RetentionDays.TWO_WEEKS,
             removal_policy=RemovalPolicy.DESTROY,
         )
+        Tags.of(log_group).add("CentralLoggingOptIn", "true")
 
         processor_role = iam.Role(
             self,
@@ -94,7 +95,14 @@ class S3LineProcessorStack(Stack):
             handler="handler.lambda_handler",
             memory_size=256,
             timeout=Duration.seconds(15),
-            environment={"MAX_FILE_BYTES": str(1024 * 1024)},
+            logging_format=lambda_.LoggingFormat.JSON,
+            application_log_level_v2=lambda_.ApplicationLogLevel.INFO,
+            system_log_level_v2=lambda_.SystemLogLevel.INFO,
+            environment={
+                "MAX_FILE_BYTES": str(1024 * 1024),
+                "SERVICE_NAME": "s3-line-processor",
+                "ENVIRONMENT": "sandbox",
+            },
             log_group=log_group,
             role=processor_role,
         )

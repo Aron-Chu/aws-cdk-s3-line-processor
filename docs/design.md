@@ -24,6 +24,15 @@
 
 Successful logs include object identity fields and `parsed_field_count`. They
 never include object contents, parsed values, or field names.
+Object keys are logged for correlation, so uploaders must not place secrets or
+personal data in file names.
+
+Lambda's native JSON log format keeps application records machine-readable.
+Every entry carries `service`, `environment`, and `log_schema_version` fields
+for consistent queries and future enrichment. The log group has a
+`CentralLoggingOptIn=true` tag as a declarative integration point for a
+platform-owned forwarding service. This stack does not create that forwarding
+pipeline.
 
 ## Security boundaries
 
@@ -40,13 +49,17 @@ never include object contents, parsed values, or field names.
 | Class | Examples | Behavior |
 | --- | --- | --- |
 | Permanent | Unexpected key or record shape, oversized object, empty/multiline input, invalid UTF-8/JSON, non-object JSON | Logged as `rejected` with a reason code; other records in the same event continue |
-| Operational | S3 read failures, unexpected service errors | Logged as `failed` and re-raised so the platform can retry |
+| Operational | S3 read failures, unexpected service errors | Logged as `failed` with a safe exception class and re-raised so the platform can retry |
 
 ## Delivery semantics
 
 S3 event notifications to Lambda are at-least-once. The same object create can
 invoke more than once. This stack does not implement idempotency keys or
 deduplication; treat processing as potentially repeated.
+
+The handler reads the exact S3 version named by the event when one is present.
+The retained bucket keeps noncurrent versions until an operator removes them;
+add automatic expiration only after defining an approved retention period.
 
 ## Out of scope
 

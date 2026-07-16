@@ -45,6 +45,15 @@ def test_creates_exactly_one_bucket_and_lambda(
     assert len(resources_of_type(synthesized_template, "AWS::Lambda::Function")) == 1
 
 
+def test_retained_bucket_and_policy_logical_ids_remain_stable(
+    synthesized_template: dict[str, Any],
+) -> None:
+    resources = synthesized_template["Resources"]
+
+    assert resources["InputBucket3BF8630A"]["Type"] == "AWS::S3::Bucket"
+    assert resources["InputBucketPolicy84EF9809"]["Type"] == "AWS::S3::BucketPolicy"
+
+
 def test_bucket_has_private_versioned_encrypted_owner_enforced_configuration(
     synthesized_template: dict[str, Any],
 ) -> None:
@@ -114,11 +123,23 @@ def test_lambda_runtime_architecture_resources_and_logs(
     assert properties["MemorySize"] == 256
     assert properties["Timeout"] == 15
     assert properties["Handler"] == "handler.lambda_handler"
-    assert properties["Environment"]["Variables"]["MAX_FILE_BYTES"] == "1048576"
+    assert properties["Environment"]["Variables"] == {
+        "ENVIRONMENT": "sandbox",
+        "MAX_FILE_BYTES": "1048576",
+        "SERVICE_NAME": "s3-line-processor",
+    }
+    logging_config = properties["LoggingConfig"]
+    assert logging_config["ApplicationLogLevel"] == "INFO"
+    assert logging_config["SystemLogLevel"] == "INFO"
+    assert logging_config["LogFormat"] == "JSON"
+    assert "LogGroup" in logging_config
 
     log_groups = resources_of_type(synthesized_template, "AWS::Logs::LogGroup")
     assert len(log_groups) == 1
-    assert next(iter(log_groups.values()))["Properties"]["RetentionInDays"] == 14
+    log_group_properties = next(iter(log_groups.values()))["Properties"]
+    assert log_group_properties["RetentionInDays"] == 14
+    tags = {tag["Key"]: tag["Value"] for tag in log_group_properties["Tags"]}
+    assert tags["CentralLoggingOptIn"] == "true"
 
 
 def test_s3_notification_has_expected_event_prefix_and_suffix(
