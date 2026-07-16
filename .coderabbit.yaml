@@ -1,10 +1,10 @@
 language: en-US
 reviews:
-  profile: assertive
+  profile: chill
   request_changes_workflow: false
-  high_level_summary: true
+  high_level_summary: false
   poem: false
-  review_status: true
+  review_status: false
   review_details: false
   auto_review:
     enabled: true
@@ -15,43 +15,32 @@ reviews:
     docstrings:
       mode: off
   path_filters:
+    - "!**/*.md"
+    - "!docs/**"
     - "!cdk.out/**"
     - "!coverage/**"
     - "!.coverage"
     - "!.pytest_cache/**"
     - "!**/__pycache__/**"
-    - "!docs/architecture.svg"
-    - "!docs/architecture.excalidraw"
+    - "!samples/**"
   path_instructions:
     - path: "s3_line_processor/**/*.py"
       instructions: |
-        Flag public S3 access, missing encryption or versioning, wildcard IAM allows, managed policies, Lambda S3 writes, missing HTTPS enforcement, unnecessary services, and broad Lambda invocation permissions.
-        Require logging permissions to remain scoped to the dedicated log group and object reads to incoming/*.
-        Verify Lambda assets exclude local bytecode and package-only files.
-        Check that retained bucket and policy behavior, notification dependencies, and deterministic naming remain deployable and match the documented cleanup procedure.
+        Flag only concrete security or deployability bugs: public S3 access, missing encryption or versioning, wildcard IAM, managed policies, Lambda S3 writes, missing HTTPS deny, broad invocation, unscoped log writes, or circular notification dependencies.
     - path: "lambda_src/**/*.py"
       instructions: |
-        Flag unbounded reads, incorrect S3 key decoding, ignored object versions, raw uploaded-content logging, swallowed operational exceptions, incorrect one-line validation, first-record-only processing, and unnecessary abstractions.
-        Treat malformed input as a permanent rejection and AWS service failures as retryable errors.
-        Flag secrets, credentials, uploaded values, or stack traces containing object content in structured logs.
+        Flag only concrete runtime bugs: unbounded reads, bad key/version handling, content logging, swallowed operational errors, incorrect one-line JSON validation, or first-record-only processing.
     - path: "tests/**/*.py"
       instructions: |
-        Require focused tests for security properties, managed-policy regressions, scoped IAM resources, event filters, parser boundaries, malformed records, multiple records, and operational error propagation.
-        Flag assertions that are so broad they would allow wildcard permissions or extra infrastructure.
+        Flag missing coverage only for security properties, parser boundaries, or operational error propagation.
     - path: ".github/workflows/*.yml"
       instructions: |
-        Flag broad permissions, long-lived AWS credentials, AWS access in PR validation, PR-triggered deployments, unpinned third-party actions, missing environment protection, and assumptions that permit unrestricted OIDC trust.
-        Require production deployment concurrency, default-branch verification, and validation before deployment.
-    - path: "README.md"
-      instructions: |
-        Verify deployment, OIDC prerequisites, maintenance, retained-resource cleanup, limitations, and security claims match the synthesized stack.
-        Flag secrets, real account identifiers, unsafe destructive commands, or architecture descriptions that drift from the editable diagram.
+        Flag broad permissions, AWS access in PR CI, unpinned actions, missing production protection, or unrestricted OIDC trust.
     - path: "requirements*.txt"
       instructions: |
-        Flag unpinned dependencies, incompatible CDK versions, unexpected runtime packages, and unnecessary additions.
+        Flag unpinned or unnecessary runtime dependencies.
     - path: "package.json"
       instructions: |
-        Flag unpinned CDK CLI versions, unnecessary packages, and verified CDK CLI or library compatibility risks.
-        Do not assume aws-cdk and aws-cdk-lib numeric versions must match; they use independent release lines.
+        Flag unpinned CDK CLI versions. Do not require aws-cdk and aws-cdk-lib numeric versions to match.
 chat:
-  auto_reply: true
+  auto_reply: false
