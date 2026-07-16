@@ -41,6 +41,7 @@ Prefer conventional code and explicit security controls over abstractions.
 
 ## Documentation
 
-Keep `README.md`, `docs/architecture.excalidraw`, and
-`docs/architecture.svg` aligned with behavior. Explain important tradeoffs,
-but avoid duplicating implementation details or adding speculative systems.
+Keep `README.md` short: overview, architecture diagram, security trust chart,
+and deploy/maintain commands only. Keep presentation detail out of the public
+repo. Keep `docs/architecture.excalidraw` and `docs/architecture.svg` aligned
+with behavior.
