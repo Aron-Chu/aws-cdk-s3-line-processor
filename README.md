@@ -1,180 +1,71 @@
 # Secure S3 Line Processor
 
-A compact AWS CDK v2 application that accepts one-line JSON objects in a
-private S3 bucket and validates them with a Python Lambda function. The design
-is intentionally direct: S3 invokes Lambda without a queue, database, VPC, or
-custom framework.
+A small AWS CDK v2 application that sends S3 object-created events directly to
+a Python 3.14 Lambda. The function validates one-line JSON files and writes
+safe structured metadata to CloudWatch Logs.
 
 ![Secure S3 line processor architecture](docs/architecture.svg)
 
-The editable source is [docs/architecture.excalidraw](docs/architecture.excalidraw).
-AWS service marks use the official AWS Architecture Icons.
+The editable diagram is
+[docs/architecture.excalidraw](docs/architecture.excalidraw).
 
 ## How it works
 
-1. An uploader sends a file to `incoming/*.json` over HTTPS.
-2. S3 emits an object-created notification to Lambda.
-3. Lambda URL-decodes the key and requests the exact object version when the
-   event includes a version ID.
-4. Lambda checks reported and returned lengths, then reads at most 1 MiB plus
-   one byte.
-5. The function validates UTF-8, the one-line contract, valid JSON, and a
-   top-level object.
-6. It logs safe structured metadata to CloudWatch Logs.
+1. Upload a file to `incoming/*.json` over HTTPS.
+2. S3 invokes Lambda with an object-created event.
+3. Lambda reads the exact object version when the event provides one.
+4. The function validates the file and logs `processed` or `rejected`.
+5. AWS service failures are raised so the event can be retried.
 
-Every record in a notification is processed. Permanent input errors are logged
-as `rejected` and do not cause retries. S3 access failures, missing objects,
-service errors, and unexpected failures are logged with safe context and
-raised so AWS can retry them. S3 notification test events are logged and
-ignored without attempting an object read.
-
-## Input contract
-
-Accepted objects must satisfy all of these rules:
-
-- The key begins with `incoming/` and ends with `.json`.
-- The object is no larger than 1 MiB.
-- The content is UTF-8. A UTF-8 byte-order mark is accepted.
-- The file contains exactly one non-empty logical line.
-- One trailing `\n` or `\r\n` is allowed.
-- The line contains one valid JSON object.
-- The top-level JSON value is an object/dictionary.
-- Uploaded `Content-Type` metadata is not trusted as format proof.
-
-Empty, whitespace-only, invalid UTF-8, malformed, pretty-printed, multiline,
-top-level array, primitive, boolean, and null inputs are rejected.
-
-Valid input:
+The input must be at most 1 MiB, valid UTF-8, and contain exactly one
+non-empty logical line with a top-level JSON object. One trailing newline is
+allowed.
 
 ```json
 {"event_id":"example-001","message":"hello","source":"manual-test"}
 ```
 
-The `samples/` directory includes valid, malformed, and multiline examples.
+Arrays, primitives, malformed JSON, multiline JSON, invalid UTF-8, `NaN`, and
+`Infinity` are rejected. Examples are available in `samples/`.
 
-## Security decisions
+## Security
 
-- S3 Block Public Access is fully enabled, ACLs are disabled through
-  bucket-owner-enforced ownership, and website hosting and CORS are absent.
-- SSE-S3 provides encryption at rest without introducing a customer-managed
-  KMS key or its policy and cost for this small sandbox workload.
-- Versioning protects against accidental overwrite and lets Lambda retrieve
-  the version identified by the event instead of a later replacement.
-- An explicit `DenyInsecureTransport` bucket policy denies `s3:*` over
-  non-TLS connections for both the bucket and its objects.
-- The bucket and its transport-security policy use `RETAIN`, so stack deletion
-  does not silently remove stored data or its HTTPS guardrail.
-- Lambda receives only `s3:GetObject` and `s3:GetObjectVersion` on
-  `incoming/*`. It has no S3 write permission.
-- The execution role trusts only `lambda.amazonaws.com`, uses no managed
-  policies, and can create streams and write events only in its dedicated log
-  group.
-- S3 invocation permission is constrained by source bucket ARN and source
-  account.
-- Lambda runs outside a VPC because it only calls public AWS service APIs. A
-  VPC would add networking complexity and could require NAT or endpoints
-  without reducing the current attack surface.
-- Logs contain object identity, size, validation status, and field count, but
-  never uploaded field names, complete content, or parsed values.
-- Runtime IAM is separate from deployment IAM. The Lambda role reads input;
-  `GitHubCdkDeployRole` deploys infrastructure and is not created here.
+- S3 is private, encrypted with SSE-S3, versioned, owner-enforced, and covered
+  by Block Public Access.
+- An explicit bucket policy denies all non-TLS S3 requests.
+- The bucket and its TLS policy are retained when the stack is deleted.
+- Lambda can only read `incoming/*`; it has no S3 write permission.
+- S3 invocation is constrained by source bucket and account.
+- Lambda writes only to its dedicated log group.
+- Logs exclude uploaded content, parsed values, and field names.
+- Pull-request CI has no AWS access.
+- Production deployment uses short-lived GitHub OIDC credentials, protected
+  `main`, and a reviewer-gated `production` environment.
 
-This applies zero-trust principles at the application and delivery boundaries
-without claiming to be a ZTNA network product. Runtime and CI identities are
-authenticated explicitly and receive only the permissions needed at their
-boundary; bootstrap administration remains a separate account-level
-responsibility.
+Account-level administration, the GitHub OIDC provider, deployment role, and
+CDK bootstrap roles are intentionally outside this application stack. The
+default CDK bootstrap uses an administrator CloudFormation execution role;
+shared or regulated accounts should replace that default with approved
+policies and guardrails.
 
-The delivery trust chain is deliberately short:
+## Project layout
 
-```text
-MFA-protected setup identity → one-time CDK bootstrap
-protected main → production approval → GitHub OIDC
-GitHubCdkDeployRole → tagged CDK bootstrap roles → CloudFormation
-Lambda execution role → read incoming/* and write its own logs
-```
+- `s3_line_processor/stack.py` — bucket, policy, Lambda, IAM, notification, and
+  outputs.
+- `lambda_src/handler.py` — bounded S3 read and strict input validation.
+- `tests/` — mocked handler tests and CDK template assertions.
+- `docs/` — editable Excalidraw source and SVG export.
+- `samples/` — valid and invalid inputs.
+- `.github/workflows/` — pull-request validation and manual OIDC deployment.
+- `AGENTS.md` — concise repository and SDLC guardrails.
 
-GitHub stores only the role ARN and region as non-secret environment
-variables. It receives short-lived AWS credentials after the repository,
-environment, audience, branch protection, and reviewer checks succeed. No AWS
-access key is stored in GitHub.
+Dependencies and tool versions are pinned in `requirements*.txt`,
+`package.json`, `.python-version`, and `.pre-commit-config.yaml`.
 
-The bucket name is generated deterministically from the deployment account,
-region, and CDK construct identity. This keeps it operator-independent and
-globally scoped while allowing CloudFormation to create an inline S3
-notification, a bucket-constrained Lambda permission, and exactly one Lambda
-function without a circular dependency or a CDK notification custom-resource
-Lambda.
+## Set up and validate
 
-## Repository structure
-
-```text
-.
-├── app.py
-├── cdk.json
-├── lambda_src/
-│   └── handler.py
-├── s3_line_processor/
-│   └── stack.py
-├── tests/
-│   ├── test_handler.py
-│   └── test_stack.py
-├── samples/
-├── docs/
-│   ├── architecture.excalidraw
-│   └── architecture.svg
-├── .github/
-│   ├── workflows/
-│   │   ├── ci.yml
-│   │   └── deploy.yml
-│   └── dependabot.yml
-├── AGENTS.md
-├── requirements.txt
-├── requirements-dev.txt
-├── package.json
-└── pyproject.toml
-```
-
-Generated CloudFormation in `cdk.out/` is intentionally ignored.
-
-## Selected versions
-
-- AWS Lambda runtime: Python 3.14
-- `aws-cdk-lib`: 2.261.0
-- `constructs`: 10.7.0
-- AWS CDK CLI: 2.1131.0
-- Boto3 for local development and tests: 1.43.49
-- pre-commit: 4.6.0
-- Ruff: 0.15.21
-- Pytest: 9.1.1
-- Pytest-cov: 7.1.0
-- CI Node.js: 24
-
-These were verified as stable on July 15, 2026 using the
-[Lambda runtime documentation](https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtimes.html),
-[PyPI](https://pypi.org/), and the
-[AWS CDK CLI npm package](https://www.npmjs.com/package/aws-cdk).
-
-The deployed function has no third-party package. It uses the Boto3 SDK in the
-managed Lambda runtime. This keeps the artifact small; a larger production
-system might package Boto3 to control its exact SDK version.
-
-## Prerequisites
-
-- Python 3.14
-- Node.js 24
-- AWS CLI v2 for account operations
-- An already bootstrapped target account and region for deployment
-- Short-lived AWS credentials from an approved non-root identity
-
-This repository does not create root settings, IAM users, administrator
-identities, `ProjectAuditRole`, `GitHubCdkDeployRole`, the GitHub OIDC provider,
-CDK bootstrap roles, billing controls, Organizations, Control Tower, IAM
-Identity Center, or organization policies.
-
-## Local setup
-
-Linux, macOS, or WSL:
+Prerequisites are Python 3.14, Node.js 24, and AWS CLI v2 for authenticated
+operations.
 
 ```bash
 python3.14 -m venv .venv
@@ -182,21 +73,7 @@ source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 npm ci
 pre-commit install
-```
 
-PowerShell:
-
-```powershell
-py -3.14 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r requirements-dev.txt
-npm ci
-pre-commit install
-```
-
-## Local validation
-
-```bash
 pre-commit run --all-files
 ruff format --check .
 ruff check .
@@ -204,209 +81,114 @@ pytest
 npx cdk synth
 ```
 
-The installed hook runs file hygiene checks, Ruff fixes and formatting, and
-Gitleaks against staged changes. Full tests and CDK synthesis remain explicit
-CI checks so routine commits stay fast. Tests use mocks and CDK assertions and
-require no AWS credentials; coverage is feedback rather than a
-perfect-percentage target.
-
-Diff reads the target account and requires an approved AWS session:
+Tests and synthesis require no AWS credentials. Before deployment, review the
+authenticated diff:
 
 ```bash
 npx cdk diff --profile DEPLOY_PROFILE
 ```
 
-Review every IAM, S3 policy, notification, replacement, and retained-resource
-change before deployment.
+## Deploy
 
-## AWS account assumptions and audit access
-
-The account is a standalone sandbox or workload account. Root is protected and
-not used routinely. Account administration and CDK bootstrap happen outside
-this repository.
-
-For read-only inspection, first discover profile names without reading
-credential files:
-
-```bash
-aws configure list-profiles
-aws sts get-caller-identity --profile AUDIT_PROFILE
-```
-
-Continue only if the returned ARN represents `ProjectAuditRole`. Do not use an
-administrator profile for routine inspection, and do not bypass
-`AccessDenied`. If no audit profile is available, perform local validation and
-leave account inspection as manual follow-up.
-
-`ProjectAuditRole` is for read-only local inspection.
-`GitHubCdkDeployRole` is for temporary GitHub OIDC deployment sessions. Neither
-role is an application runtime identity.
-
-## Deployment
-
-Bootstrap is a one-time manual account operation and is deliberately outside
-the application stack:
+Bootstrap each target account and region once with an approved non-root setup
+identity:
 
 ```bash
 npx cdk bootstrap aws://ACCOUNT_ID/AWS_REGION --profile ADMIN_PROFILE
 ```
 
-Use an approved non-root administrative session. Do not use
-`ProjectAuditRole`, create long-lived keys, or commit account identifiers.
-The default CDK bootstrap grants its CloudFormation execution role
-`AdministratorAccess`; that is a documented sandbox tradeoff, not runtime
-permission. Shared or regulated accounts should bootstrap with organization-
-approved execution policies and guardrails.
-
-After bootstrap and review:
+Manual deployment:
 
 ```bash
-npx cdk diff --profile DEPLOY_PROFILE
 npx cdk deploy --profile DEPLOY_PROFILE
 ```
 
-CDK outputs the bucket and function names. Deployment and destruction are not
-performed automatically by local tests.
+The optional `Deploy` GitHub Actions workflow:
 
-## GitHub Actions deployment
+- runs only through `workflow_dispatch` from the default branch;
+- requires approval of the `production` environment;
+- reruns formatting, linting, tests, and synthesis;
+- assumes `GitHubCdkDeployRole` through OIDC;
+- shows `cdk diff` before deployment; and
+- prevents overlapping production deployments.
 
-PR CI has only `contents: read`. It formats, lints, tests, and synthesizes
-without requesting an OIDC token or touching AWS.
-
-The deployment workflow runs only through `workflow_dispatch`, requires the
-`production` environment, verifies the default branch, reruns all checks,
-assumes `GitHubCdkDeployRole` through OIDC, displays `cdk diff`, and deploys
-without a second interactive prompt after environment approval. A production
-concurrency group prevents overlapping CloudFormation deployments.
+Configure these non-secret `production` environment variables:
 
 ```text
-pre-commit → pull request CI → advisory review → protected main
-→ production approval → OIDC → CDK diff/deploy → smoke test
+AWS_REGION
+AWS_ROLE_ARN
 ```
 
-Manual GitHub prerequisites:
+The role trust must require audience `sts.amazonaws.com` and the exact subject:
 
-1. Protect the default branch, require CI, and create a reviewer-gated
-   `production` environment.
-2. Add environment variables `AWS_ROLE_ARN` and `AWS_REGION`.
-3. Ensure the account and region are already CDK-bootstrapped.
-4. Configure the deployment role trust for audience `sts.amazonaws.com` and
-   subject `repo:OWNER/REPOSITORY:environment:production`.
-5. Keep that trust restricted to this exact repository and environment.
+```text
+repo:OWNER/REPOSITORY:environment:production
+```
 
-Do not add AWS access keys to GitHub. The role and OIDC provider remain
-account-level prerequisites and are not created by this stack.
+Do not store AWS access keys in GitHub.
 
-## Uploading a sample file
+## Operate
+
+CDK outputs the bucket and function names. Upload a valid sample:
 
 ```bash
-aws s3 cp samples/valid.json s3://BUCKET_NAME/incoming/example.json
+aws s3 cp samples/valid.json \
+  s3://BUCKET_NAME/incoming/example.json \
+  --profile OPERATOR_PROFILE
 ```
 
-An object outside `incoming/` or without the `.json` suffix does not trigger
-the function. Do not rely on `Content-Type`; the function validates bytes.
-
-## Viewing logs
+Inspect recent processing results:
 
 ```bash
-aws logs tail /aws/lambda/FUNCTION_NAME --since 10m --follow
+aws logs tail /aws/lambda/FUNCTION_NAME \
+  --since 10m \
+  --profile OPERATOR_PROFILE
 ```
 
-A successful log entry includes `status: processed`, object metadata, and
-`parsed_field_count`. A permanent invalid input has `status: rejected` and a
-safe `reason_code`. Operational failures are raised after safe context is
-logged.
+A valid file logs `status: processed`. Permanent input errors log
+`status: rejected` with a safe reason code.
 
-## Maintenance
+## Maintain
 
-Dependency updates:
+- Dependabot proposes pinned pip, npm, and GitHub Actions updates.
+- CodeRabbit provides advisory review; required CI remains authoritative.
+- Pre-commit runs file hygiene, Ruff, and Gitleaks checks.
+- After dependency or infrastructure changes, run pre-commit, Pytest,
+  `cdk synth`, and an authenticated `cdk diff`.
+- Keep both architecture files aligned with the deployed design.
+- Use a read-only audit role for routine AWS inspection rather than an
+  administrator identity.
 
-- Dependabot opens small weekly grouped PRs for pip, npm, and GitHub Actions.
-- Dependabot alerts, security updates, secret scanning, and push protection
-  should remain enabled in repository security settings.
-- CodeRabbit automatically reviews non-draft pull requests to `main` using the
-  security-focused rules in `.coderabbit.yaml`. Install the CodeRabbit GitHub
-  App with access limited to this repository; CI remains authoritative.
-- Update pinned hook revisions deliberately with `pre-commit autoupdate`, then
-  run `pre-commit run --all-files` before committing the result.
-- Keep exact pins and regenerate `package-lock.json` with `npm install` after
-  changing the CDK CLI.
-- After every update, run Ruff, Pytest, `npx cdk synth`, and an authenticated
-  `npx cdk diff`.
+## Clean up
 
-Read-only inspection after confirming `ProjectAuditRole`:
-
-```bash
-aws s3api get-public-access-block --bucket BUCKET_NAME --profile AUDIT_PROFILE
-aws s3api get-bucket-encryption --bucket BUCKET_NAME --profile AUDIT_PROFILE
-aws s3api get-bucket-versioning --bucket BUCKET_NAME --profile AUDIT_PROFILE
-aws s3api get-bucket-ownership-controls --bucket BUCKET_NAME --profile AUDIT_PROFILE
-aws s3api get-bucket-policy --bucket BUCKET_NAME --profile AUDIT_PROFILE
-aws lambda get-function-configuration --function-name FUNCTION_NAME --profile AUDIT_PROFILE
-aws cloudformation describe-stacks --stack-name S3LineProcessorStack --profile AUDIT_PROFILE
-```
-
-Update both `docs/architecture.excalidraw` and `docs/architecture.svg` whenever
-components or flows change, then confirm the README export still matches the
-editable source.
-
-## Cleanup
-
-The bucket is retained, so clear its Lambda notification before destroying the
-function. Otherwise the retained configuration keeps targeting a deleted
-function:
+The versioned bucket and TLS policy are retained. Clear the retained S3
+notification before deleting the Lambda:
 
 ```bash
 aws s3api put-bucket-notification-configuration \
   --bucket BUCKET_NAME \
   --notification-configuration '{}' \
   --profile DEPLOY_PROFILE
-npx cdk diff --profile DEPLOY_PROFILE
+
 npx cdk destroy --profile DEPLOY_PROFILE
 ```
 
-CDK removes the Lambda, log group, and stack-managed resources, but the
-versioned bucket and HTTPS-enforcing bucket policy remain because they use
-`RETAIN`.
-
-Removing a visible object does not remove older versions or delete markers.
-Inspect and explicitly remove every retained version before deleting the
-bucket:
+Deleting the retained bucket is a separate destructive operation. List and
+remove every object version and delete marker before deleting it:
 
 ```bash
-aws s3api list-object-versions --bucket BUCKET_NAME --profile DEPLOY_PROFILE
-aws s3api delete-object --bucket BUCKET_NAME --key OBJECT_KEY --version-id VERSION_ID --profile DEPLOY_PROFILE
-aws s3api delete-bucket --bucket BUCKET_NAME --profile DEPLOY_PROFILE
+aws s3api list-object-versions \
+  --bucket BUCKET_NAME \
+  --profile DEPLOY_PROFILE
 ```
 
-Repeat `delete-object` for all versions and delete markers. Confirm the bucket
-name and target account before any destructive command.
+Confirm the account and bucket name before removing retained data.
 
 ## Known limitations
 
 - S3 notifications are at-least-once and can arrive out of order.
-- Duplicate processing is harmless today because the processor only logs.
-- Invalid files are not quarantined; they remain in the retained input bucket.
-- There is no DLQ, replay queue, output store, or cross-record transaction.
-- One operational failure raises the invocation so AWS can retry.
-- The maximum object is intentionally small and read into memory after a
-  bounded read.
-- The generated bucket naming scheme permits one copy of this stack per
-  account and region.
-- A fresh deployment with the same stack identity cannot create the
-  deterministically named retained bucket. Delete the retained bucket after
-  emptying all versions, or explicitly import it into the replacement stack.
-
-## Production considerations and tradeoffs
-
-Direct S3-to-Lambda delivery is sufficient for a small logging-only processor
-and is easier to review than an event platform. A production workload might
-add SQS buffering, a DLQ, idempotency storage, alarms, packaged SDK versions,
-quarantine handling, or customer-managed KMS based on measured reliability,
-compliance, and recovery requirements.
-
-Those services are not implemented here because they do not help demonstrate
-the requested single-file parser and would obscure least privilege and error
-behavior. The current solution remains one stack, one bucket, and one Lambda,
-with no VPC, NAT, API, database, queue, custom construct library, or broad
-observability platform.
+- Invalid files remain in the input bucket.
+- There is no queue, DLQ, replay store, quarantine, or idempotency database.
+- One operational record failure causes AWS to retry the invocation.
+- A production workload may add those controls when reliability requirements
+  justify the additional complexity.
