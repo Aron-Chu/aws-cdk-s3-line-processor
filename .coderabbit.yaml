@@ -1,0 +1,57 @@
+language: en-US
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  review_details: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+  pre_merge_checks:
+    docstrings:
+      mode: off
+  path_filters:
+    - "!cdk.out/**"
+    - "!coverage/**"
+    - "!.coverage"
+    - "!.pytest_cache/**"
+    - "!**/__pycache__/**"
+    - "!docs/architecture.svg"
+    - "!docs/architecture.excalidraw"
+  path_instructions:
+    - path: "s3_line_processor/**/*.py"
+      instructions: |
+        Flag public S3 access, missing encryption or versioning, wildcard IAM allows, managed policies, Lambda S3 writes, missing HTTPS enforcement, unnecessary services, and broad Lambda invocation permissions.
+        Require logging permissions to remain scoped to the dedicated log group and object reads to incoming/*.
+        Verify Lambda assets exclude local bytecode and package-only files.
+        Check that retained bucket and policy behavior, notification dependencies, and deterministic naming remain deployable and match the documented cleanup procedure.
+    - path: "lambda_src/**/*.py"
+      instructions: |
+        Flag unbounded reads, incorrect S3 key decoding, ignored object versions, raw uploaded-content logging, swallowed operational exceptions, incorrect one-line validation, first-record-only processing, and unnecessary abstractions.
+        Treat malformed input as a permanent rejection and AWS service failures as retryable errors.
+        Flag secrets, credentials, uploaded values, or stack traces containing object content in structured logs.
+    - path: "tests/**/*.py"
+      instructions: |
+        Require focused tests for security properties, managed-policy regressions, scoped IAM resources, event filters, parser boundaries, malformed records, multiple records, and operational error propagation.
+        Flag assertions that are so broad they would allow wildcard permissions or extra infrastructure.
+    - path: ".github/workflows/*.yml"
+      instructions: |
+        Flag broad permissions, long-lived AWS credentials, AWS access in PR validation, PR-triggered deployments, unpinned third-party actions, missing environment protection, and assumptions that permit unrestricted OIDC trust.
+        Require production deployment concurrency, default-branch verification, and validation before deployment.
+    - path: "README.md"
+      instructions: |
+        Verify deployment, OIDC prerequisites, maintenance, retained-resource cleanup, limitations, and security claims match the synthesized stack.
+        Flag secrets, real account identifiers, unsafe destructive commands, or architecture descriptions that drift from the editable diagram.
+    - path: "requirements*.txt"
+      instructions: |
+        Flag unpinned dependencies, incompatible CDK versions, unexpected runtime packages, and unnecessary additions.
+    - path: "package.json"
+      instructions: |
+        Flag unpinned CDK CLI versions, unnecessary packages, and verified CDK CLI or library compatibility risks.
+        Do not assume aws-cdk and aws-cdk-lib numeric versions must match; they use independent release lines.
+chat:
+  auto_reply: true

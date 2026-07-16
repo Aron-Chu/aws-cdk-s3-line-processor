@@ -1,0 +1,25 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+extend-exclude = ["cdk.out"]
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "SIM", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = [
+    "--strict-config",
+    "--strict-markers",
+    "--cov=lambda_src",
+    "--cov=s3_line_processor",
+    "--cov-report=term-missing",
+]
+
+[tool.coverage.run]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

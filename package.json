@@ -1,0 +1,8 @@
+{
+  "name": "aws-cdk-s3-line-processor",
+  "version": "1.0.0",
+  "private": true,
+  "devDependencies": {
+    "aws-cdk": "2.1131.0"
+  }
+}
