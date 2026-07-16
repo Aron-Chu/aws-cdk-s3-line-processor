@@ -79,6 +79,24 @@ The `samples/` directory includes valid, malformed, and multiline examples.
 - Runtime IAM is separate from deployment IAM. The Lambda role reads input;
   `GitHubCdkDeployRole` deploys infrastructure and is not created here.
 
+This applies zero-trust principles without claiming to be a ZTNA network
+product: every human, CI, service, and runtime identity is authenticated
+explicitly and receives only the permissions needed at its boundary.
+
+The delivery trust chain is deliberately short:
+
+```text
+MFA-protected setup identity → one-time CDK bootstrap
+protected main → production approval → GitHub OIDC
+GitHubCdkDeployRole → tagged CDK bootstrap roles → CloudFormation
+Lambda execution role → read incoming/* and write its own logs
+```
+
+GitHub stores only the role ARN and region as non-secret environment
+variables. It receives short-lived AWS credentials after the repository,
+environment, audience, branch protection, and reviewer checks succeed. No AWS
+access key is stored in GitHub.
+
 The bucket name is generated deterministically from the deployment account,
 region, and CDK construct identity. This keeps it operator-independent and
 globally scoped while allowing CloudFormation to create an inline S3
@@ -108,6 +126,7 @@ Lambda.
 │   │   ├── ci.yml
 │   │   └── deploy.yml
 │   └── dependabot.yml
+├── AGENTS.md
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── package.json
@@ -173,31 +192,21 @@ npm ci
 pre-commit install
 ```
 
-## Formatting, linting, and tests
+## Local validation
 
 ```bash
 pre-commit run --all-files
-ruff format .
 ruff format --check .
 ruff check .
 pytest
+npx cdk synth
 ```
 
 The installed hook runs file hygiene checks, Ruff fixes and formatting, and
 Gitleaks against staged changes. Full tests and CDK synthesis remain explicit
-CI checks so routine commits stay fast.
-
-Pytest is configured to report branch-aware coverage for the Lambda and CDK
-packages. Tests use mocks and CDK assertions and require no AWS credentials.
-Coverage is feedback rather than a perfect-percentage target.
-
-## CDK synthesis and diff
-
-Synthesis is local and does not require AWS credentials:
-
-```bash
-npx cdk synth
-```
+CI checks so routine commits stay fast. Tests use mocks and CDK assertions and
+require no AWS credentials; coverage is feedback rather than a
+perfect-percentage target.
 
 Diff reads the target account and requires an approved AWS session:
 
@@ -231,7 +240,7 @@ leave account inspection as manual follow-up.
 `GitHubCdkDeployRole` is for temporary GitHub OIDC deployment sessions. Neither
 role is an application runtime identity.
 
-## CDK bootstrap
+## Deployment
 
 Bootstrap is a one-time manual account operation and is deliberately outside
 the application stack:
@@ -242,8 +251,10 @@ npx cdk bootstrap aws://ACCOUNT_ID/AWS_REGION --profile ADMIN_PROFILE
 
 Use an approved non-root administrative session. Do not use
 `ProjectAuditRole`, create long-lived keys, or commit account identifiers.
-
-## Manual deployment
+The default CDK bootstrap grants its CloudFormation execution role
+`AdministratorAccess`; that is a documented sandbox tradeoff, not runtime
+permission. Shared or regulated accounts should bootstrap with organization-
+approved execution policies and guardrails.
 
 After bootstrap and review:
 
@@ -266,16 +277,20 @@ assumes `GitHubCdkDeployRole` through OIDC, displays `cdk diff`, and deploys
 without a second interactive prompt after environment approval. A production
 concurrency group prevents overlapping CloudFormation deployments.
 
+```text
+pre-commit → pull request CI → advisory review → protected main
+→ production approval → OIDC → CDK diff/deploy → smoke test
+```
+
 Manual GitHub prerequisites:
 
-1. Create a GitHub environment named `production`.
+1. Protect the default branch, require CI, and create a reviewer-gated
+   `production` environment.
 2. Add environment variables `AWS_ROLE_ARN` and `AWS_REGION`.
-3. Require reviewers or environment approval.
-4. Protect the default branch and require CI.
-5. Ensure the account is already CDK-bootstrapped.
-6. Configure the existing role trust for audience `sts.amazonaws.com` and
+3. Ensure the account and region are already CDK-bootstrapped.
+4. Configure the deployment role trust for audience `sts.amazonaws.com` and
    subject `repo:OWNER/REPOSITORY:environment:production`.
-7. Keep the role trust restricted to this exact repository and environment.
+5. Keep that trust restricted to this exact repository and environment.
 
 Do not add AWS access keys to GitHub. The role and OIDC provider remain
 account-level prerequisites and are not created by this stack.
