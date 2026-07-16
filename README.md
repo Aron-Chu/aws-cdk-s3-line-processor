@@ -8,15 +8,13 @@ validates one-line JSON and writes safe processing metadata to CloudWatch Logs.
 
 Editable source: [docs/architecture.excalidraw](docs/architecture.excalidraw).
 
-```text
-HTTPS upload
-     ↓
-Private, encrypted, versioned S3 bucket
-     ↓ ObjectCreated: incoming/*.json
-Python 3.14 Lambda with read-only object access
-     ↓
-CloudWatch Logs without uploaded contents
-```
+## Key decisions
+
+- Lambda reads only `incoming/*`; S3 invoke permission is constrained by source
+  account and bucket ARN.
+- S3→Lambda delivery is at-least-once; this stack does not deduplicate.
+- Malformed input is rejected permanently; AWS/service failures retry. Logs contain
+  safe processing metadata—no payload contents, parsed values, or JSON field names.
 
 ## Documentation
 

@@ -171,7 +171,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             }
             if request_id:
                 failure["request_id"] = request_id
-            logger.error(_serialize_log(failure), exc_info=True)
+            logger.error(_serialize_log(failure))
             raise
 
         if request_id:

@@ -11,6 +11,22 @@
 4. Malformed input is rejected permanently for that record. AWS or service
    failures raise and remain retryable.
 
+## Networking model
+
+The stack creates no customer-managed VPC. Uploaders and the non-VPC Lambda use
+AWS regional service endpoints over HTTPS; AWS manages service DNS, routing, and
+transport termination. "Private bucket" means access is controlled by IAM,
+Block Public Access, and bucket policy—it does not mean the S3 regional endpoint
+is reachable only through a private network.
+
+S3-to-Lambda notification delivery is an AWS-managed service invocation rather
+than a customer-routed TCP connection. The Lambda resource permission still
+constrains that invocation by source account and bucket ARN. A VPC, NAT gateway,
+security groups, Route 53, and VPC endpoints would add no required protection
+for the current flow. Revisit them only for private-resource access, private-only
+upload paths, or explicit egress controls; ZTNA is not applicable because this
+stack exposes no interactive private application.
+
 ## Input contract
 
 | Rule | Requirement |
@@ -39,17 +55,26 @@ pipeline.
 - Bucket is private: block public access, owner-enforced, SSE-S3 encrypted, and
   versioned.
 - Bucket policy denies all `s3:*` when `aws:SecureTransport` is false.
-- Lambda may `s3:GetObject` / `s3:GetObjectVersion` only on `incoming/*`; it has
-  no S3 write permissions.
+- The Lambda execution role trusts only the Lambda service and may
+  `s3:GetObject` / `s3:GetObjectVersion` only on `incoming/*`; it has no S3
+  write permissions.
 - S3-to-Lambda invoke permission is constrained by source account and bucket ARN.
 - Logs stay structured and free of payload contents.
+
+The GitHub OIDC provider, deploy role, and CDK bootstrap roles are
+account-provisioned controls outside this application stack. The workflow only
+requests short-lived credentials from that existing trust boundary.
 
 ## Errors
 
 | Class | Examples | Behavior |
 | --- | --- | --- |
 | Permanent | Unexpected key or record shape, oversized object, empty/multiline input, invalid UTF-8/JSON, non-object JSON | Logged as `rejected` with a reason code; other records in the same event continue |
-| Operational | S3 read failures, unexpected service errors | Logged as `failed` with a safe exception class and re-raised so the platform can retry |
+| Operational | S3 read failures, unexpected service errors | Logged as `failed` with a safe exception class and no application traceback, then re-raised so the platform can retry |
+
+The Lambda runtime can still emit its own standard record for an unhandled
+exception after the function re-raises it. Application logs deliberately avoid
+duplicating the exception message or traceback.
 
 ## Delivery semantics
 

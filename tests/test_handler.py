@@ -301,6 +301,8 @@ def test_handler_propagates_s3_operational_failures(
     logged = json.loads(caplog.records[-1].message)
     assert logged["status"] == "failed"
     assert logged["error_type"] == "PermissionError"
+    assert caplog.records[-1].exc_info is None
+    assert "access denied" not in caplog.records[-1].message
     assert logged["service"] == "s3-line-processor"
     assert logged["environment"] == "sandbox"
     assert logged["log_schema_version"] == 1
