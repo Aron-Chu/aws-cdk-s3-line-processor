@@ -7,6 +7,9 @@ from urllib.parse import unquote_plus
 import boto3
 
 MAX_FILE_BYTES = int(os.environ.get("MAX_FILE_BYTES", 1024 * 1024))
+SERVICE_NAME = os.environ.get("SERVICE_NAME", "s3-line-processor")
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "sandbox")
+LOG_SCHEMA_VERSION = 1
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -160,8 +163,12 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             logger.info(_serialize_log(result))
             results.append(result)
             continue
-        except Exception:
-            failure = {"status": "failed", **safe_context}
+        except Exception as error:
+            failure = {
+                "status": "failed",
+                "error_type": type(error).__name__,
+                **safe_context,
+            }
             if request_id:
                 failure["request_id"] = request_id
             logger.error(_serialize_log(failure), exc_info=True)
@@ -200,4 +207,10 @@ def _safe_record_context(record: Any) -> dict[str, Any]:
 
 
 def _serialize_log(message: dict[str, Any]) -> str:
-    return json.dumps(message, separators=(",", ":"), sort_keys=True)
+    envelope = {
+        **message,
+        "service": SERVICE_NAME,
+        "environment": ENVIRONMENT,
+        "log_schema_version": LOG_SCHEMA_VERSION,
+    }
+    return json.dumps(envelope, separators=(",", ":"), sort_keys=True)

@@ -29,7 +29,7 @@ reviews:
         Prioritize concrete security or deployability bugs: public S3 access, missing encryption or versioning, wildcard IAM, managed policies, Lambda S3 writes, missing HTTPS deny, broad invocation, unscoped log writes, or circular notification dependencies. Always report other critical correctness, security, or stability issues.
     - path: "lambda_src/**/*.py"
       instructions: |
-        Prioritize concrete runtime bugs: unbounded reads, bad key/version handling, content logging, swallowed operational errors, incorrect one-line JSON validation, or first-record-only processing. Always report other critical correctness, security, or stability issues.
+        Prioritize concrete runtime bugs: unbounded reads, bad key/version handling, content logging, swallowed operational errors, incorrect one-line JSON validation, or first-record-only processing. Object identity metadata (bucket, key, version, etag, sequencer, size) is intentionally logged for correlation; reject only payload contents, parsed values, and field names. Always report other critical correctness, security, or stability issues.
     - path: "tests/**/*.py"
       instructions: |
         Prioritize missing coverage for security properties, parser boundaries, or operational error propagation. Always report other critical correctness, security, or stability issues.

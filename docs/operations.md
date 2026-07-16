@@ -118,6 +118,12 @@ aws logs tail "$LOG_GROUP" \
 Confirm logs show only safe metadata (bucket, key, status, reason codes) and no
 uploaded field names or values.
 
+For the full post-deploy matrix, use an approved operator profile:
+
+```bash
+python scripts/live_smoke_test.py --profile OPERATOR_PROFILE --cleanup
+```
+
 ## Maintain
 
 - Review Dependabot updates before merging.

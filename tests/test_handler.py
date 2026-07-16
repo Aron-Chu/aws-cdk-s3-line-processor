@@ -287,6 +287,7 @@ def test_handler_rejects_malformed_records_without_s3_read(
 
 def test_handler_propagates_s3_operational_failures(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     client = FakeS3Client([PermissionError("access denied")])
     monkeypatch.setattr(handler, "s3_client", client)
@@ -296,6 +297,13 @@ def test_handler_propagates_s3_operational_failures(
             {"Records": [make_record()]},
             SimpleNamespace(aws_request_id="request-1"),
         )
+
+    logged = json.loads(caplog.records[-1].message)
+    assert logged["status"] == "failed"
+    assert logged["error_type"] == "PermissionError"
+    assert logged["service"] == "s3-line-processor"
+    assert logged["environment"] == "sandbox"
+    assert logged["log_schema_version"] == 1
 
 
 def test_handler_logs_safe_success_metadata_without_uploaded_values(
@@ -319,6 +327,9 @@ def test_handler_logs_safe_success_metadata_without_uploaded_values(
     assert "top_level_fields" not in logged
     assert logged["parsed_field_count"] == 1
     assert logged["request_id"] == "request-9"
+    assert logged["service"] == "s3-line-processor"
+    assert logged["environment"] == "sandbox"
+    assert logged["log_schema_version"] == 1
 
 
 def test_handler_rejects_reported_or_content_length_over_limit(

@@ -22,9 +22,9 @@ CloudWatch Logs without uploaded contents
 
 | Topic | Document |
 | --- | --- |
-| Overview and architecture | This README; [architecture source](docs/architecture.excalidraw) |
 | Deployment and maintenance | [docs/operations.md](docs/operations.md) |
 | Design, security, and failure behavior | [docs/design.md](docs/design.md) |
+| Live verification results | [docs/test-results.md](docs/test-results.md) |
 | Contributor and agent guardrails | [AGENTS.md](AGENTS.md) |
 
 Deploy, validate, smoke-test, and clean up using the
