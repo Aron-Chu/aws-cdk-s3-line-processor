@@ -6,6 +6,10 @@ extend-exclude = ["cdk.out"]
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "SIM", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# Keep parenthesized except tuples for reviewer/local-tool clarity across versions.
+"lambda_src/handler.py" = ["UP024"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

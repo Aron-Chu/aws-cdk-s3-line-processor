@@ -98,6 +98,20 @@ def test_parse_rejects_invalid_contract(data: bytes, reason_code: str) -> None:
     assert error.value.reason_code == reason_code
 
 
+def test_parse_maps_recursion_error_to_invalid_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_recursion_error(*_args: object, **_kwargs: object) -> object:
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(handler.json, "loads", raise_recursion_error)
+
+    with pytest.raises(handler.ValidationError) as error:
+        handler.parse_single_line_json(b'{"event_id":"one"}')
+
+    assert error.value.reason_code == "invalid_json"
+
+
 def test_parse_accepts_maximum_size_and_rejects_one_byte_over() -> None:
     overhead = len(b'{"value":""}')
     maximum = b'{"value":"' + b"a" * (handler.MAX_FILE_BYTES - overhead) + b'"}'
@@ -231,6 +245,23 @@ def test_handler_reports_permanent_validation_failure_and_continues(
                 "s3": {
                     "bucket": {"name": "input-bucket"},
                     "object": {"key": "incoming/a.json", "versionId": 7},
+                },
+            },
+            "invalid_s3_record",
+        ),
+        (
+            {
+                "eventSource": "aws:s3",
+                "s3": {"bucket": {"name": "input-bucket"}, "object": []},
+            },
+            "invalid_s3_record",
+        ),
+        (
+            {
+                "eventSource": "aws:s3",
+                "s3": {
+                    "bucket": [],
+                    "object": {"key": "incoming/a.json"},
                 },
             },
             "invalid_s3_record",

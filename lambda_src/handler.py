@@ -47,7 +47,7 @@ def parse_single_line_json(
 
     try:
         parsed = json.loads(line, parse_constant=_reject_json_constant)
-    except (json.JSONDecodeError, ValueError) as error:
+    except (json.JSONDecodeError, ValueError, RecursionError) as error:
         raise ValidationError("invalid_json") from error
 
     if not isinstance(parsed, dict):
@@ -180,18 +180,22 @@ def _safe_record_context(record: Any) -> dict[str, Any]:
         return {}
 
     try:
-        object_record = record["s3"]["object"]
+        s3_record = record["s3"]
+        object_record = s3_record["object"]
+        bucket_record = s3_record["bucket"]
+        if not isinstance(object_record, dict) or not isinstance(bucket_record, dict):
+            return {}
         encoded_key = object_record.get("key")
         object_key = unquote_plus(encoded_key) if isinstance(encoded_key, str) else None
         return {
-            "bucket": record["s3"]["bucket"].get("name"),
+            "bucket": bucket_record.get("name"),
             "key": object_key,
             "version_id": object_record.get("versionId"),
             "etag": object_record.get("eTag"),
             "sequencer": object_record.get("sequencer"),
             "reported_object_size": object_record.get("size"),
         }
-    except KeyError, TypeError:
+    except (KeyError, TypeError):  # fmt: skip
         return {}
 
 
