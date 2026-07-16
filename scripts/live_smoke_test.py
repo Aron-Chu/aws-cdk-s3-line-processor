@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import sys
 import time
 import uuid
 from collections import defaultdict
@@ -16,6 +17,15 @@ EXPECTED_LOG_CONTEXT = {
     "environment": "sandbox",
     "log_schema_version": 1,
 }
+# Documentation placeholders must never be passed as real --profile values.
+DOC_PLACEHOLDER_PROFILES = frozenset(
+    {
+        "OPERATOR_PROFILE",
+        "ADMIN_PROFILE",
+        "DEPLOY_PROFILE",
+        "YOUR_OPERATOR_PROFILE",
+    }
+)
 
 
 def parse_log(message: str) -> dict[str, Any] | None:
@@ -54,10 +64,34 @@ def outcome_for(record: dict[str, Any]) -> str:
     return str(record.get("reason_code"))
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
+def validate_profile(profile: str | None) -> None:
+    """Reject documentation placeholders before opening an AWS session."""
+    if profile is None:
+        return
+    if profile in DOC_PLACEHOLDER_PROFILES:
+        print(
+            f"--profile {profile!r} is a documentation placeholder. "
+            "Use your local AWS CLI profile name "
+            "(for example, s3-line-processor-operator), or omit --profile "
+            "to use ambient credentials.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Post-deploy smoke matrix against the live stack. "
+            "--profile must be a real local AWS CLI profile, not a docs placeholder."
+        )
+    )
     parser.add_argument(
-        "--profile", help="AWS CLI profile; omit for ambient credentials"
+        "--profile",
+        help=(
+            "Local AWS CLI profile name (not OPERATOR_PROFILE). "
+            "Omit to use ambient credentials."
+        ),
     )
     parser.add_argument("--region", default=os.environ.get("AWS_REGION", "us-west-2"))
     parser.add_argument("--stack", default="S3LineProcessorStack")
@@ -67,7 +101,12 @@ def main() -> int:
         action="store_true",
         help="Delete the exact object versions created by this run",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    validate_profile(args.profile)
 
     session = boto3.Session(profile_name=args.profile, region_name=args.region)
     cloudformation = session.client("cloudformation")
@@ -188,13 +227,20 @@ def main() -> int:
     if sentinel in joined_logs or field_sentinel in joined_logs:
         failures.append("uploaded payload value or field name appeared in logs")
     context_valid = True
+    missing_context = 0
     for record in records:
-        for field, expected_value in EXPECTED_LOG_CONTEXT.items():
-            if record.get(field) != expected_value:
-                context_valid = False
-                failures.append(
-                    f"{record.get('key')}: expected {field}={expected_value}"
-                )
+        if any(
+            record.get(field) != expected_value
+            for field, expected_value in EXPECTED_LOG_CONTEXT.items()
+        ):
+            context_valid = False
+            missing_context += 1
+    if missing_context:
+        failures.append(
+            f"{missing_context}/{len(records)} log records missing "
+            f"{', '.join(EXPECTED_LOG_CONTEXT)} — deployed Lambda likely predates "
+            "the logging contract; redeploy from main and rerun smoke"
+        )
 
     print("| Case | Expected | Actual |")
     print("| --- | --- | --- |")
