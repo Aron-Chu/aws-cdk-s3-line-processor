@@ -7,6 +7,15 @@
 
 ## Local validation
 
+Shortcut (WSL/Linux):
+
+```bash
+make setup
+make check
+```
+
+Equivalent manual steps:
+
 ```bash
 python3.14 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
@@ -70,66 +79,74 @@ npx cdk deploy --profile DEPLOY_PROFILE
 
 ## Discover stack resources
 
+Replace `s3-line-processor-operator` with your local AWS CLI profile name (IAM
+user or SSO). Do not use documentation placeholders such as `OPERATOR_PROFILE`.
+
 ```bash
 STACK=S3LineProcessorStack
+PROFILE=s3-line-processor-operator
 
 BUCKET=$(aws cloudformation describe-stacks \
   --stack-name "$STACK" \
   --query "Stacks[0].Outputs[?OutputKey=='InputBucketName'].OutputValue" \
   --output text \
-  --profile OPERATOR_PROFILE)
+  --profile "$PROFILE")
 
 FUNCTION=$(aws cloudformation describe-stacks \
   --stack-name "$STACK" \
   --query "Stacks[0].Outputs[?OutputKey=='ProcessorFunctionName'].OutputValue" \
   --output text \
-  --profile OPERATOR_PROFILE)
+  --profile "$PROFILE")
 
 LOG_GROUP=$(aws cloudformation describe-stack-resources \
   --stack-name "$STACK" \
   --query "StackResources[?ResourceType=='AWS::Logs::LogGroup' && contains(LogicalResourceId, 'ProcessorLogGroup')].PhysicalResourceId | [0]" \
   --output text \
-  --profile OPERATOR_PROFILE)
+  --profile "$PROFILE")
 
 printf 'bucket=%s\nfunction=%s\nlog_group=%s\n' "$BUCKET" "$FUNCTION" "$LOG_GROUP"
 ```
 
 ## Smoke test
 
-Valid upload (expect `status: processed`):
+Manual single uploads (optional):
 
 ```bash
 aws s3 cp samples/valid.json \
   "s3://${BUCKET}/incoming/smoke-valid.json" \
-  --profile OPERATOR_PROFILE
+  --profile "$PROFILE"
 
 aws logs tail "$LOG_GROUP" \
   --since 10m \
   --filter-pattern '"processed"' \
-  --profile OPERATOR_PROFILE
+  --profile "$PROFILE"
 ```
-
-Invalid JSON upload (expect `status: rejected`):
 
 ```bash
 aws s3 cp samples/invalid-json.json \
   "s3://${BUCKET}/incoming/smoke-invalid.json" \
-  --profile OPERATOR_PROFILE
+  --profile "$PROFILE"
 
 aws logs tail "$LOG_GROUP" \
   --since 10m \
   --filter-pattern '"rejected"' \
-  --profile OPERATOR_PROFILE
+  --profile "$PROFILE"
 ```
 
 Confirm logs show only safe metadata (bucket, key, status, reason codes) and no
-uploaded field names or values.
+uploaded field names or values. After the logging-contract deploy, each
+application log should also include `service`, `environment`, and
+`log_schema_version`.
 
-For the full post-deploy matrix, use an approved operator profile:
+Full post-deploy matrix:
 
 ```bash
-python scripts/live_smoke_test.py --profile OPERATOR_PROFILE --cleanup
+make smoke PROFILE=s3-line-processor-operator
 ```
+
+Helper parsing and placeholder rejection are covered by `make test`. The live
+matrix requires a deployed stack whose Lambda matches the current logging
+contract; otherwise outcome checks can pass while log-context checks fail.
 
 ## Maintain
 
