@@ -26,21 +26,21 @@ reviews:
   path_instructions:
     - path: "s3_line_processor/**/*.py"
       instructions: |
-        Flag only concrete security or deployability bugs: public S3 access, missing encryption or versioning, wildcard IAM, managed policies, Lambda S3 writes, missing HTTPS deny, broad invocation, unscoped log writes, or circular notification dependencies.
+        Prioritize concrete security or deployability bugs: public S3 access, missing encryption or versioning, wildcard IAM, managed policies, Lambda S3 writes, missing HTTPS deny, broad invocation, unscoped log writes, or circular notification dependencies. Always report other critical correctness, security, or stability issues.
     - path: "lambda_src/**/*.py"
       instructions: |
-        Flag only concrete runtime bugs: unbounded reads, bad key/version handling, content logging, swallowed operational errors, incorrect one-line JSON validation, or first-record-only processing.
+        Prioritize concrete runtime bugs: unbounded reads, bad key/version handling, content logging, swallowed operational errors, incorrect one-line JSON validation, or first-record-only processing. Always report other critical correctness, security, or stability issues.
     - path: "tests/**/*.py"
       instructions: |
-        Flag missing coverage only for security properties, parser boundaries, or operational error propagation.
+        Prioritize missing coverage for security properties, parser boundaries, or operational error propagation. Always report other critical correctness, security, or stability issues.
     - path: ".github/workflows/*.yml"
       instructions: |
-        Flag broad permissions, AWS access in PR CI, unpinned actions, missing production protection, or unrestricted OIDC trust.
+        Prioritize broad permissions, AWS access in PR CI, unpinned actions, missing production protection, or unrestricted OIDC trust. Always report other critical correctness, security, or stability issues.
     - path: "requirements*.txt"
       instructions: |
-        Flag unpinned or unnecessary runtime dependencies.
+        Prioritize unpinned or unnecessary runtime dependencies. Always report critical security or compatibility issues.
     - path: "package.json"
       instructions: |
-        Flag unpinned CDK CLI versions. Do not require aws-cdk and aws-cdk-lib numeric versions to match.
+        Prioritize unpinned CDK CLI versions and critical security or compatibility issues. Do not require aws-cdk and aws-cdk-lib numeric versions to match.
 chat:
   auto_reply: false
