@@ -9,6 +9,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.cache/
+.tox/
+.nox/
+.hypothesis/
 .coverage
 .coverage.*
 coverage/
@@ -19,6 +23,7 @@ cdk.context.json
 
 node_modules/
 npm-debug.log*
+*.log
 
 .env
 .env.*
@@ -26,6 +31,10 @@ npm-debug.log*
 .aws/
 credentials
 aws-credentials
+*.pem
+*.key
+*.p12
+*.pfx
 
 .idea/
 .vscode/

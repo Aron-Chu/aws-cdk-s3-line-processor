@@ -49,10 +49,17 @@ Trust the role for this repository and environment only:
 Some repositories use immutable owner and repository IDs in this claim. Verify
 the emitted subject and do not use a wildcard. The workflow uses short-lived
 OIDC credentials (`id-token: write`); do not store AWS access keys in GitHub.
+The OIDC provider, deploy role, and CDK bootstrap roles are provisioned at the
+AWS account level and are not created by this application stack.
 
 Environment approval gates the job. Review a recent local or CI-synthesized
 `cdk diff` before dispatching; the workflow also runs a live diff after
 approval.
+
+The GitHub environment is named `production` because it is the protected
+deployment approval boundary. The sample workload remains classified as
+`sandbox` in its resource tag and structured log context; these labels describe
+different control-plane and workload concerns.
 
 ## Deploy (alternative): manual CDK
 
