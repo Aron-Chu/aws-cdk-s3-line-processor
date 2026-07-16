@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import time
+import uuid
 from collections import defaultdict
 from typing import Any
 
@@ -36,9 +37,10 @@ def parse_log(message: str) -> dict[str, Any] | None:
 def collect_run_logs(
     logs_client: Any, log_group: str, started_ms: int, run_id: str
 ) -> tuple[list[str], list[dict[str, Any]]]:
-    events = logs_client.filter_log_events(
-        logGroupName=log_group, startTime=started_ms
-    ).get("events", [])
+    events: list[dict[str, Any]] = []
+    paginator = logs_client.get_paginator("filter_log_events")
+    for page in paginator.paginate(logGroupName=log_group, startTime=started_ms):
+        events.extend(page.get("events", []))
     raw_messages = [event["message"] for event in events if run_id in event["message"]]
     records = [
         parsed for message in raw_messages if (parsed := parse_log(message)) is not None
@@ -84,13 +86,18 @@ def main() -> int:
         if item["ResourceType"] == "AWS::Logs::LogGroup"
     )
 
-    run_id = f"smoke-{int(time.time())}"
+    run_id = f"smoke-{uuid.uuid4().hex}"
     prefix = f"incoming/{run_id}/"
+    field_sentinel = f"DO_NOT_LOG_FIELD_{run_id}"
     sentinel = f"DO_NOT_LOG_{run_id}"
     started_ms = int(time.time() * 1000) - 5_000
 
     cases = [
-        ("valid.json", json.dumps({"private": sentinel}).encode(), "processed"),
+        (
+            "valid.json",
+            json.dumps({field_sentinel: sentinel}).encode(),
+            "processed",
+        ),
         ("invalid.json", b'{"broken":}', "invalid_json"),
         ("multiline.json", b'{"a":1}\n{"b":2}', "multiline_input"),
         ("empty.json", b"", "empty_input"),
@@ -177,8 +184,9 @@ def main() -> int:
         failures.append(f"rapid overwrite: got {rapid_actual}")
     results.append(("rapid overwrite", "processed, invalid_json", rapid_actual))
 
-    if sentinel in "\n".join(raw_messages):
-        failures.append("uploaded payload value appeared in logs")
+    joined_logs = "\n".join(raw_messages)
+    if sentinel in joined_logs or field_sentinel in joined_logs:
+        failures.append("uploaded payload value or field name appeared in logs")
     context_valid = True
     for record in records:
         for field, expected_value in EXPECTED_LOG_CONTEXT.items():
@@ -192,7 +200,8 @@ def main() -> int:
     print("| --- | --- | --- |")
     for name, expected_result, actual in results:
         print(f"| {name} | `{expected_result}` | `{actual}` |")
-    print(f"\nPayload value logged: {sentinel in ''.join(raw_messages)}")
+    payload_logged = sentinel in joined_logs or field_sentinel in joined_logs
+    print(f"\nPayload value or field name logged: {payload_logged}")
     print(f"Standard log context valid: {context_valid}")
     print(f"Observed logs: {len(records)}/{EXPECTED_LOGS}")
     print(f"Created prefix: {prefix}")
