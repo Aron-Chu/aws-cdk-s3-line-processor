@@ -79,9 +79,11 @@ The `samples/` directory includes valid, malformed, and multiline examples.
 - Runtime IAM is separate from deployment IAM. The Lambda role reads input;
   `GitHubCdkDeployRole` deploys infrastructure and is not created here.
 
-This applies zero-trust principles without claiming to be a ZTNA network
-product: every human, CI, service, and runtime identity is authenticated
-explicitly and receives only the permissions needed at its boundary.
+This applies zero-trust principles at the application and delivery boundaries
+without claiming to be a ZTNA network product. Runtime and CI identities are
+authenticated explicitly and receive only the permissions needed at their
+boundary; bootstrap administration remains a separate account-level
+responsibility.
 
 The delivery trust chain is deliberately short:
 

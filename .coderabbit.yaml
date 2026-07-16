@@ -22,8 +22,6 @@ reviews:
     - "!**/__pycache__/**"
     - "!docs/architecture.svg"
     - "!docs/architecture.excalidraw"
-    - "!package-lock.json"
-    - "!samples/invalid-json.json"
   path_instructions:
     - path: "s3_line_processor/**/*.py"
       instructions: |
