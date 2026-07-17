@@ -38,6 +38,7 @@ Deploy, smoke-test, and clean up: [docs/operations.md](docs/operations.md).
 
 | Topic | Document |
 | --- | --- |
+| Full reviewer tour and interview questions | [docs/review-guide.md](docs/review-guide.md) |
 | Deployment and maintenance | [docs/operations.md](docs/operations.md) |
 | Design, security, and failure behavior | [docs/design.md](docs/design.md) |
 | What was intentionally not added | [docs/intentional-omissions.md](docs/intentional-omissions.md) |

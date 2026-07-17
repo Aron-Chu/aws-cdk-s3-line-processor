@@ -158,26 +158,37 @@ def main() -> int:
 
     expected: dict[str, tuple[str, str]] = {}
     versions: list[tuple[str, str]] = []
+    etags: list[str] = []
     for name, body, outcome in cases:
         key = prefix + name
         response = s3.put_object(Bucket=bucket, Key=key, Body=body)
         version_id = response["VersionId"]
+        etags.append(response["ETag"].strip('"'))
         expected[object_reference(bucket, key, version_id)] = (key, outcome)
         versions.append((key, version_id))
 
     ignored_key = prefix + "test.txt"
     response = s3.put_object(Bucket=bucket, Key=ignored_key, Body=b"ignored")
     ignored_version = response["VersionId"]
+    etags.append(response["ETag"].strip('"'))
     ignored_ref = object_reference(bucket, ignored_key, ignored_version)
     versions.append((ignored_key, ignored_version))
 
     rapid_key = prefix + "rapid.json"
-    rapid_valid = s3.put_object(Bucket=bucket, Key=rapid_key, Body=b'{"generation":1}')[
-        "VersionId"
-    ]
-    rapid_invalid = s3.put_object(
+    rapid_valid_response = s3.put_object(
+        Bucket=bucket, Key=rapid_key, Body=b'{"generation":1}'
+    )
+    rapid_invalid_response = s3.put_object(
         Bucket=bucket, Key=rapid_key, Body=b'{"generation":2,"broken":}'
-    )["VersionId"]
+    )
+    rapid_valid = rapid_valid_response["VersionId"]
+    rapid_invalid = rapid_invalid_response["VersionId"]
+    etags.extend(
+        [
+            rapid_valid_response["ETag"].strip('"'),
+            rapid_invalid_response["ETag"].strip('"'),
+        ]
+    )
     versions.extend([(rapid_key, rapid_valid), (rapid_key, rapid_invalid)])
     rapid_valid_ref = object_reference(bucket, rapid_key, rapid_valid)
     rapid_invalid_ref = object_reference(bucket, rapid_key, rapid_invalid)
@@ -250,6 +261,9 @@ def main() -> int:
     )
     if raw_identity_logged:
         failures.append("raw bucket name or object key appeared in logs")
+    etag_logged = any(etag in joined_logs for etag in etags)
+    if etag_logged:
+        failures.append("S3 ETag fingerprint appeared in logs")
     context_valid = True
     missing_context = 0
     for record in records:
@@ -273,6 +287,7 @@ def main() -> int:
     payload_logged = sentinel in joined_logs or field_sentinel in joined_logs
     print(f"\nPayload value or field name logged: {payload_logged}")
     print(f"Raw bucket name or object key logged: {raw_identity_logged}")
+    print(f"S3 ETag fingerprint logged: {etag_logged}")
     print(f"Standard log context valid: {context_valid}")
     print(f"Observed logs: {len(records)}/{EXPECTED_LOGS}")
     print(f"Created prefix: {prefix}")

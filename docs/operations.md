@@ -30,32 +30,46 @@ TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
 
 A merge to protected `main` starts Deploy when infrastructure, runtime,
 dependency, or deploy-workflow paths change; documentation-only merges do not.
-Manual **Run workflow** also works. Validation has no AWS access. The workflow
-then uses two jobs that both reference the protected GitHub `production`
-environment:
+Manual **Run workflow** also works.
 
-1. First approval releases short-lived OIDC credentials to the `plan` job. It
-   runs `cdk diff`, and when differences exist prepares a commit/run-named
-   CloudFormation change set without executing it. The diff is uploaded as a
-   30-day artifact.
-2. Review the plan job summary and `production-change-set-<commit>` artifact.
-3. Second approval releases credentials to the `deploy` job. It verifies the
-   planned commit and uses CDK's `execute-change-set` method on that named plan.
+```text
+validate (no AWS)
+  -> Approve plan
+  -> prepare one CloudFormation change set
+  -> review DescribeChangeSet artifact
+     -> empty: stop
+     -> changes: Approve execute
+  -> verify artifact against AWS
+  -> execute that exact ChangeSetId and wait
+  -> operator runs make smoke separately
+```
 
-If `cdk diff` shows no resource changes, the workflow skips prepare and skips
-the execute job. Plan review uses the CDK diff artifact rather than calling
-`cloudformation:DescribeChangeSet` with the deploy role.
+The plan job synthesizes once, publishes required CDK assets, and prepares a
+commit/run-named change set without executing it. Its 30-day artifact contains
+account-redacted `DescribeChangeSet` JSON and a short resource table. A known
+CloudFormation no-change result skips execute without parsing human CDK output.
 
-The second approval therefore happens after the deployable CloudFormation plan
-exists. For a team environment, enable independent required reviewers, prevent
-self-review, and disable administrator bypass as policy permits.
+The execute job intentionally has no checkout, Python, Node, dependency
+installation, synthesis, or CDK command. After the second approval it:
 
-Required `production` environment variables:
+1. downloads the plan artifact;
+2. verifies the commit, redacted change-set ID, type, status, and nonempty plan;
+3. obtains a new 15-minute OIDC session;
+4. describes the live change set and compares both its immutable ID and its
+   account-redacted JSON with the approved artifact; and
+5. executes that ID with the AWS CLI and waits for CloudFormation.
 
-| Variable | Purpose |
-| --- | --- |
-| `AWS_REGION` | Target region |
-| `AWS_ROLE_ARN` | Deploy role assumed through OIDC |
+This means Approve #2 authorizes an already-created plan. `--require-approval
+never` only disables the CDK terminal prompt; it does not bypass either GitHub
+environment approval.
+
+Required `production` environment configuration:
+
+| Kind | Name | Purpose |
+| --- | --- | --- |
+| Secret | `AWS_ROLE_ARN` | Existing OIDC role ARN; kept out of workflow logs |
+| Secret | `AWS_ACCOUNT_ID` | Account allowlist and redaction/reconstruction value |
+| Variable | `AWS_REGION` | Target AWS region |
 
 The account must already have CDK bootstrap resources, a GitHub OIDC provider,
 and a deploy role trusted only for:
@@ -66,10 +80,37 @@ and a deploy role trusted only for:
 Do not use a wildcard subject or stored AWS keys. These account-level resources
 are intentionally outside this application stack.
 
+The role must retain the permissions already required by CDK asset publication
+and change-set creation, plus `cloudformation:DescribeChangeSet`; execution also
+requires `cloudformation:ExecuteChangeSet` and the stack waiter reads. Keep the
+permissions resource-scoped wherever the CDK bootstrap model allows it.
+
+### Current limitation and next hardening
+
+Both protected jobs currently reference `production` and assume the same role.
+The approval timing is real, but Approve #1 still releases a role capable of
+execution. Do not hide this limitation in an interview.
+
+The account/platform owner can close it without changing `stack.py`:
+
+| Boundary | GitHub environment | OIDC role capability |
+| --- | --- | --- |
+| Plan | `production-plan` | Publish this stack's assets, create and describe its change set; deny execute |
+| Execute | `production-execute` | Describe and execute the approved change set; cannot publish or create a replacement plan |
+
+Give each environment its own exact OIDC `sub` trust, secret role ARN, required
+reviewer policy, and no administrator bypass. The workflow should switch only
+after both roles and environment protections exist; the application repository
+must not create account-level GitHub trust or bootstrap roles.
+
+For a team, require an independent reviewer and prevent self-review. A solo
+repository can demonstrate the mechanics but cannot manufacture separation of
+duties.
+
 Run `make smoke` separately with an approved operator profile; the deploy role
 does not need application-data or log-reading permissions. `--require-approval
-never` is used only for the CDK CLI prompts because GitHub provides separate
-prepare and execute approval boundaries.
+never` is used only for the CDK CLI prompt because GitHub provides the prepare
+and execute approval boundaries.
 
 ## External reviewer: deploy to your own sandbox
 

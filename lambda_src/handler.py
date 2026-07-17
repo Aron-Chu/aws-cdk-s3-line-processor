@@ -97,7 +97,6 @@ def process_s3_record(record: dict[str, Any]) -> dict[str, Any]:
     object_context = {
         "object_ref": _object_reference(bucket_name, object_key, version_id),
         "version_id": version_id,
-        "etag": object_record.get("eTag"),
         "sequencer": object_record.get("sequencer"),
         "reported_object_size": object_record.get("size"),
     }
@@ -215,7 +214,6 @@ def _safe_record_context(record: Any) -> dict[str, Any]:
         return {
             "object_ref": object_ref,
             "version_id": version_id,
-            "etag": object_record.get("eTag"),
             "sequencer": object_record.get("sequencer"),
             "reported_object_size": object_record.get("size"),
         }
