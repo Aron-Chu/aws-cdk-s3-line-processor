@@ -6,6 +6,14 @@ import pytest
 from lambda_src import handler
 
 
+def test_library_loggers_are_quiet() -> None:
+    import logging
+
+    assert logging.getLogger("botocore").level == logging.WARNING
+    assert logging.getLogger("boto3").level == logging.WARNING
+    assert logging.getLogger("urllib3").level == logging.WARNING
+
+
 class FakeBody:
     def __init__(self, data: bytes) -> None:
         self.data = data

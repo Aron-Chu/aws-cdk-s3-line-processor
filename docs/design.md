@@ -88,11 +88,5 @@ add automatic expiration only after defining an approved retention period.
 
 ## Out of scope
 
-Not implemented. Revisit when requirements demand them:
-
-| Need | Candidate |
-| --- | --- |
-| Buffering, isolated retries, or poison-message handling | SQS between S3 and Lambda, plus a DLQ |
-| Operator alerts on failures or throttling | CloudWatch alarms |
-| Customer-managed encryption | KMS (SSE-KMS) on the bucket |
-| Safe reprocessing of duplicate deliveries | Explicit idempotency (for example keyed by bucket/key/version) |
+Services and patterns intentionally not implemented are listed in
+[intentional-omissions.md](intentional-omissions.md).
