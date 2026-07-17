@@ -47,10 +47,11 @@ npx cdk bootstrap aws://ACCOUNT_ID/AWS_REGION --profile ADMIN_PROFILE
 
 ## Deploy (recommended): GitHub Actions
 
-Deploy is intentional and manual: **Actions → Deploy → Run workflow** from
-protected `main`. Validation runs first; the `deploy` job then waits for
-**Approve** or **Reject** on the GitHub `production` environment before any AWS
-credentials or `cdk deploy` steps run.
+Every push to protected `main` (and manual **Actions → Deploy → Run workflow**)
+starts Deploy. The workflow checks out that `main` tip (all merged commits),
+runs `validate`, then the `deploy` job waits for **Approve** or **Reject** on
+the GitHub `production` environment before any AWS credentials or `cdk deploy`
+steps run.
 
 Required `production` environment variables (not secrets):
 
