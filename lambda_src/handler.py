@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -9,11 +10,10 @@ import boto3
 MAX_FILE_BYTES = int(os.environ.get("MAX_FILE_BYTES", 1024 * 1024))
 SERVICE_NAME = os.environ.get("SERVICE_NAME", "s3-line-processor")
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "sandbox")
-LOG_SCHEMA_VERSION = 1
+LOG_SCHEMA_VERSION = 2
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-# Keep CloudWatch focused on app outcome logs; botocore INFO is credential noise.
 logging.getLogger("botocore").setLevel(logging.WARNING)
 logging.getLogger("boto3").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
@@ -27,6 +27,10 @@ class ValidationError(ValueError):
         super().__init__(reason_code)
         self.reason_code = reason_code
         self.object_context = object_context or {}
+
+
+class OperationalError(RuntimeError):
+    pass
 
 
 def parse_single_line_json(
@@ -91,8 +95,7 @@ def process_s3_record(record: dict[str, Any]) -> dict[str, Any]:
     elif version_id is not None and not isinstance(version_id, str):
         raise ValidationError("invalid_s3_record")
     object_context = {
-        "bucket": bucket_name,
-        "key": object_key,
+        "object_ref": _object_reference(bucket_name, object_key, version_id),
         "version_id": version_id,
         "etag": object_record.get("eTag"),
         "sequencer": object_record.get("sequencer"),
@@ -176,7 +179,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             if request_id:
                 failure["request_id"] = request_id
             logger.error(_serialize_log(failure))
-            raise
+            raise OperationalError("retryable_object_processing_failure") from None
 
         if request_id:
             result["request_id"] = request_id
@@ -198,16 +201,35 @@ def _safe_record_context(record: Any) -> dict[str, Any]:
             return {}
         encoded_key = object_record.get("key")
         object_key = unquote_plus(encoded_key) if isinstance(encoded_key, str) else None
+        bucket_name = bucket_record.get("name")
+        version_id = object_record.get("versionId")
+        if version_id == "null":
+            version_id = None
+        object_ref = (
+            _object_reference(bucket_name, object_key, version_id)
+            if isinstance(bucket_name, str)
+            and isinstance(object_key, str)
+            and (version_id is None or isinstance(version_id, str))
+            else None
+        )
         return {
-            "bucket": bucket_record.get("name"),
-            "key": object_key,
-            "version_id": object_record.get("versionId"),
+            "object_ref": object_ref,
+            "version_id": version_id,
             "etag": object_record.get("eTag"),
             "sequencer": object_record.get("sequencer"),
             "reported_object_size": object_record.get("size"),
         }
     except (KeyError, TypeError):  # fmt: skip
         return {}
+
+
+def _object_reference(bucket: str, key: str, version_id: str | None) -> str:
+    digest = hashlib.sha256()
+    for value in (bucket, key, version_id or ""):
+        encoded = value.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, byteorder="big"))
+        digest.update(encoded)
+    return digest.hexdigest()
 
 
 def _serialize_log(message: dict[str, Any]) -> str:

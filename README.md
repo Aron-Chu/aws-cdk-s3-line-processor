@@ -22,8 +22,9 @@ Deploy, smoke-test, and clean up: [docs/operations.md](docs/operations.md).
 - Lambda reads only `incoming/*`; S3 invoke permission is constrained by source
   account and bucket ARN.
 - S3→Lambda delivery is at-least-once; this stack does not deduplicate.
-- Malformed input is rejected permanently; AWS/service failures retry. Logs contain
-  safe processing metadata—no payload contents, parsed values, or JSON field names.
+- Malformed input is rejected permanently; AWS/service failures retry. Logs use a
+  pseudonymous object reference and contain no raw bucket/key, payload contents,
+  parsed values, or JSON field names.
 
 ## Review path
 

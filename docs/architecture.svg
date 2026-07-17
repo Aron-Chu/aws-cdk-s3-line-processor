@@ -44,7 +44,7 @@
 
   <rect class="card" x="990" y="445" width="220" height="115" rx="12" fill="#ffffff" stroke="#E7157B"/>
   <text class="note-title" x="1010" y="475" fill="#9d174d">CloudWatch Logs</text>
-  <text class="note" x="1010" y="503">No payload contents, values,</text><text class="note" x="1010" y="523">or JSON field names</text>
+  <text class="note" x="1010" y="503">No raw bucket/key or</text><text class="note" x="1010" y="523">payload data / field names</text>
 
   <text x="325" y="610" font-family="Arial,sans-serif" font-size="14" font-weight="600" fill="#334155">Deployment control plane</text><path d="M520 605 H1210" stroke="#cbd5e1" stroke-width="1"/>
   <rect class="card" x="40" y="645" width="180" height="110" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-dasharray="7 5"/>

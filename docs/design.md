@@ -38,14 +38,18 @@ stack exposes no interactive private application.
 | JSON | A single object (`{...}`); no arrays, scalars, `NaN`, `Infinity`, or `-Infinity` |
 | Rejected | Empty body, multiple lines, invalid UTF-8, invalid JSON, non-object JSON |
 
-Successful logs include object identity fields and `parsed_field_count`. They
-never include object contents, parsed values, or field names.
-Object keys are logged for correlation, so uploaders must not place secrets or
-personal data in file names.
+Successful logs include a SHA-256 `object_ref`, version/ETag/sequencer metadata,
+sizes, and `parsed_field_count`. The reference is derived from bucket, decoded
+key, and version ID with length-delimited inputs, so repeated delivery of the
+same object version remains correlatable without logging the raw bucket or key.
+It is pseudonymous correlation metadata, not a claim of irreversible
+anonymization. Logs never include object contents, parsed values, field names,
+raw bucket names, or raw object keys.
 
-Lambda's native JSON log format keeps application records machine-readable.
-Every entry carries `service`, `environment`, and `log_schema_version` fields
-for consistent queries and future enrichment. The log group has a
+Lambda's native JSON format creates an outer runtime envelope; the application
+record is serialized inside its `message` field and the smoke helper unwraps it.
+Every application entry carries `service`, `environment`, and
+`log_schema_version=2` fields for consistent queries and future enrichment. The log group has a
 `CentralLoggingOptIn=true` tag as a declarative integration point for a
 platform-owned forwarding service. This stack does not create that forwarding
 pipeline.
@@ -59,7 +63,7 @@ pipeline.
   `s3:GetObject` / `s3:GetObjectVersion` only on `incoming/*`; it has no S3
   write permissions.
 - S3-to-Lambda invoke permission is constrained by source account and bucket ARN.
-- Logs stay structured and free of payload contents.
+- Logs stay structured and free of raw bucket/key and payload contents.
 
 The GitHub OIDC provider, deploy role, and CDK bootstrap roles are
 account-provisioned controls outside this application stack. The workflow only
@@ -70,11 +74,12 @@ requests short-lived credentials from that existing trust boundary.
 | Class | Examples | Behavior |
 | --- | --- | --- |
 | Permanent | Unexpected key or record shape, oversized object, empty/multiline input, invalid UTF-8/JSON, non-object JSON | Logged as `rejected` with a reason code; other records in the same event continue |
-| Operational | S3 read failures, unexpected service errors | Logged as `failed` with a safe exception class and no application traceback, then re-raised so the platform can retry |
+| Operational | S3 read failures, unexpected service errors | Logged as `failed` with a safe exception class and no application traceback, then converted to a generic `OperationalError` so the platform retries without emitting the original exception message |
 
-The Lambda runtime can still emit its own standard record for an unhandled
-exception after the function re-raises it. Application logs deliberately avoid
-duplicating the exception message or traceback.
+The Lambda runtime can still emit its own standard record for the generic
+`OperationalError`. The original SDK/service exception message and traceback
+are deliberately not chained because they could contain a bucket, key, or
+endpoint URL.
 
 ## Delivery semantics
 

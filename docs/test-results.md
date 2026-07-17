@@ -25,6 +25,21 @@ make smoke PROFILE=s3-line-processor-operator
 
 Nine outcome logs matched the matrix. Region: `us-west-2`.
 
+This is historical schema-v1 evidence. It predates the schema-v2 pseudonymous
+`object_ref` contract and the two-stage prepare/execute deployment workflow; do
+not cite it as live proof of those later changes.
+
+## Current checkout validation (July 17, 2026)
+
+```bash
+TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
+```
+
+Result: lock verification, all pre-commit hooks, 63 tests, 95.72% coverage, and
+CDK synthesis passed. This is local evidence only. The schema-v2 logging change
+still requires protected deployment followed by `make smoke` before it can be
+claimed as live.
+
 ## Fresh local setup (July 16, 2026)
 
 Clean-room install and full validation with a new absolute venv:

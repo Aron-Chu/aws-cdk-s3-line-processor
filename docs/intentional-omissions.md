@@ -9,3 +9,5 @@
 | KMS (SSE-KMS) | SSE-S3 encrypts without key-policy surface. | CMK / compliance requirement |
 | CloudWatch alarms | Not required to prove the parser path. | Operator must be paged on errors/throttles |
 | Idempotency store | No side effects beyond logs today. | Before DB writes or outbound actions |
+| Vendored boto3 | Runtime boto3 keeps the Lambda asset small; current SDK use is narrow and tested. | Exact SDK patch reproducibility or a supply-chain freeze is required |
+| Object/noncurrent-version expiration | No approved data-retention period exists, and automatic deletion is destructive. | Legal/operations approve a retention and recovery policy |
