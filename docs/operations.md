@@ -47,11 +47,16 @@ npx cdk bootstrap aws://ACCOUNT_ID/AWS_REGION --profile ADMIN_PROFILE
 
 ## Deploy (recommended): GitHub Actions
 
-Every push to protected `main` (and manual **Actions → Deploy → Run workflow**)
-starts Deploy. The workflow checks out that `main` tip (all merged commits),
-runs `validate`, then the `deploy` job waits for **Approve** or **Reject** on
-the GitHub `production` environment before any AWS credentials or `cdk deploy`
-steps run.
+This is Jenkins-style **build then approve**, not auto-ship to AWS.
+
+1. A push to protected `main` (or **Actions → Deploy → Run workflow**) starts
+   the Deploy workflow and checks out that `main` tip.
+2. Job `validate` runs immediately (lock, lint, tests, synth). **No AWS.**
+3. Job `deploy` then **stops and asks you to Approve or Reject** on the GitHub
+   `production` environment (Review deployments).
+4. **Only after Approve** does it assume OIDC, run `cdk diff`, and `cdk deploy`.
+5. **Reject** = no credentials, no AWS changes. Merging to `main` never forces a
+   live deploy by itself.
 
 Required `production` environment variables (not secrets):
 
