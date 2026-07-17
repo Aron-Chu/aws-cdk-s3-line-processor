@@ -8,6 +8,15 @@ validates one-line JSON and writes safe processing metadata to CloudWatch Logs.
 
 Editable source: [docs/architecture.excalidraw](docs/architecture.excalidraw).
 
+## Quickstart
+
+```bash
+make setup
+make check
+```
+
+Deploy, smoke-test, and clean up: [docs/operations.md](docs/operations.md).
+
 ## Key decisions
 
 - Lambda reads only `incoming/*`; S3 invoke permission is constrained by source
@@ -16,6 +25,14 @@ Editable source: [docs/architecture.excalidraw](docs/architecture.excalidraw).
 - Malformed input is rejected permanently; AWS/service failures retry. Logs contain
   safe processing metadata—no payload contents, parsed values, or JSON field names.
 
+## Review path
+
+1. Architecture and behavior — this README and [docs/design.md](docs/design.md)
+2. CDK stack — `s3_line_processor/stack.py`
+3. Lambda handler — `lambda_src/handler.py`
+4. CI and deploy workflows — `.github/workflows/`
+5. Evidence — [docs/test-results.md](docs/test-results.md)
+
 ## Documentation
 
 | Topic | Document |
@@ -23,7 +40,3 @@ Editable source: [docs/architecture.excalidraw](docs/architecture.excalidraw).
 | Deployment and maintenance | [docs/operations.md](docs/operations.md) |
 | Design, security, and failure behavior | [docs/design.md](docs/design.md) |
 | Live verification results | [docs/test-results.md](docs/test-results.md) |
-| Contributor and agent guardrails | [AGENTS.md](AGENTS.md) |
-
-Deploy, validate, smoke-test, and clean up using the
-[operations guide](docs/operations.md).
