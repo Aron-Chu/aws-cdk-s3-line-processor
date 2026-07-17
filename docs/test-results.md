@@ -41,7 +41,7 @@ do not cite it as proof of schema-v2 or two-stage Deploy.
 TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
 ```
 
-Result: lock verification, all pre-commit hooks, 65 tests, 95.74% coverage, and
+Result: lock verification, all pre-commit hooks, 67 tests, 95.74% coverage, and
 CDK synthesis passed. All 100 CDK feature flags are pinned to their reviewed
 recommended values; a synth comparison confirmed the flags do not change any
 application resource. The ETag-removal and exact change-set workflow changes in

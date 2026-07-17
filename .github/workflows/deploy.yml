@@ -14,6 +14,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "pyproject.toml"
+      - "requirements.lock"
       - "requirements*.txt"
       - "s3_line_processor/**"
   workflow_dispatch:
@@ -24,6 +25,33 @@ permissions:
 concurrency:
   group: production-deploy
   cancel-in-progress: false
+
+env:
+  CHANGE_SET_PROJECTION: >-
+    {
+      ChangeSetName,
+      ChangeSetId,
+      StackId,
+      StackName,
+      Description,
+      Parameters,
+      ExecutionStatus,
+      Status,
+      StatusReason,
+      StackDriftStatus,
+      NotificationARNs,
+      RollbackConfiguration,
+      Capabilities,
+      Tags,
+      Changes,
+      IncludeNestedStacks,
+      ParentChangeSetId,
+      RootChangeSetId,
+      OnStackFailure,
+      ImportExistingResources,
+      DeploymentMode,
+      DeploymentConfig
+    }
 
 jobs:
   validate:
@@ -83,7 +111,6 @@ jobs:
       change_set_name: ${{ steps.prepare.outputs.change_set_name }}
       commit_sha: ${{ steps.prepare.outputs.commit_sha }}
       has_changes: ${{ steps.prepare.outputs.has_changes }}
-      change_set_type: ${{ steps.prepare.outputs.change_set_type }}
       change_set_id: ${{ steps.prepare.outputs.change_set_id }}
     permissions:
       contents: read
@@ -171,11 +198,9 @@ jobs:
           execution_status="$(jq -r '.ExecutionStatus' /tmp/change-set.json)"
           status_reason="$(jq -r '.StatusReason // ""' /tmp/change-set.json)"
           change_count="$(jq '.Changes | length' /tmp/change-set.json)"
-          change_set_type="$(jq -r '.ChangeSetType' /tmp/change-set.json)"
           change_set_id="$(jq -r '.ChangeSetId' /tmp/change-set.json)"
           redacted_change_set_id="${change_set_id/$EXPECTED_ACCOUNT_ID/<ACCOUNT_ID>}"
           test "$redacted_change_set_id" != "$change_set_id"
-          echo "change_set_type=$change_set_type" >> "$GITHUB_OUTPUT"
           echo "change_set_id=$redacted_change_set_id" >> "$GITHUB_OUTPUT"
           if [ "$status" = "FAILED" ] && { \
             [[ "$status_reason" == "The submitted information didn't contain changes."* ]] || \
@@ -190,8 +215,9 @@ jobs:
             echo "Prepared change set is not reviewable: status=$status execution_status=$execution_status" >&2
             exit 1
           fi
-          sed "s/$EXPECTED_ACCOUNT_ID/<ACCOUNT_ID>/g" \
-            /tmp/change-set.json > plan-evidence/change-set.json
+          jq -S "$CHANGE_SET_PROJECTION" /tmp/change-set.json | \
+            sed "s/$EXPECTED_ACCOUNT_ID/<ACCOUNT_ID>/g" \
+              > plan-evidence/change-set.json
           jq -r '
             (
               ["Action", "Logical ID", "Resource type", "Replacement"],
@@ -247,13 +273,11 @@ jobs:
         env:
           CHANGE_SET_NAME: ${{ needs.plan.outputs.change_set_name }}
           PLANNED_SHA: ${{ needs.plan.outputs.commit_sha }}
-          CHANGE_SET_TYPE: ${{ needs.plan.outputs.change_set_type }}
           CHANGE_SET_ID: ${{ needs.plan.outputs.change_set_id }}
         run: |
           test "$GITHUB_SHA" = "$PLANNED_SHA"
           test "$(jq -r '.ChangeSetName' plan-evidence/change-set.json)" = "$CHANGE_SET_NAME"
           test "$(jq -r '.ChangeSetId' plan-evidence/change-set.json)" = "$CHANGE_SET_ID"
-          test "$(jq -r '.ChangeSetType' plan-evidence/change-set.json)" = "$CHANGE_SET_TYPE"
           test "$(jq -r '.Status' plan-evidence/change-set.json)" = "CREATE_COMPLETE"
           test "$(jq -r '.ExecutionStatus' plan-evidence/change-set.json)" = "AVAILABLE"
           test "$(jq '.Changes | length' plan-evidence/change-set.json)" -gt 0
@@ -272,7 +296,6 @@ jobs:
       - name: Execute approved change set
         env:
           CHANGE_SET_NAME: ${{ needs.plan.outputs.change_set_name }}
-          CHANGE_SET_TYPE: ${{ needs.plan.outputs.change_set_type }}
           APPROVED_CHANGE_SET_ID: ${{ needs.plan.outputs.change_set_id }}
           EXPECTED_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
@@ -285,14 +308,23 @@ jobs:
           live_id="$(jq -r '.ChangeSetId' /tmp/live-change-set.json)"
           approved_id="${APPROVED_CHANGE_SET_ID/<ACCOUNT_ID>/$EXPECTED_ACCOUNT_ID}"
           test "$live_id" = "$approved_id"
-          sed "s/$EXPECTED_ACCOUNT_ID/<ACCOUNT_ID>/g" \
-            /tmp/live-change-set.json > /tmp/redacted-live-change-set.json
-          test "$(jq -S -c . /tmp/redacted-live-change-set.json | sha256sum)" = \
-            "$(jq -S -c . plan-evidence/change-set.json | sha256sum)"
+          jq -S "$CHANGE_SET_PROJECTION" /tmp/live-change-set.json | \
+            sed "s/$EXPECTED_ACCOUNT_ID/<ACCOUNT_ID>/g" \
+              > /tmp/reviewed-live-change-set.json
+          jq -S -c . plan-evidence/change-set.json > /tmp/approved-change-set.json
+          jq -S -c . /tmp/reviewed-live-change-set.json > /tmp/live-change-set.jsonl
+          cmp --silent /tmp/approved-change-set.json /tmp/live-change-set.jsonl
           aws cloudformation execute-change-set \
             --stack-name S3LineProcessorStack \
             --change-set-name "$live_id"
-          if [ "$CHANGE_SET_TYPE" = "CREATE" ]; then
+          aws cloudformation wait stack-exists \
+            --stack-name S3LineProcessorStack
+          stack_status="$(aws cloudformation describe-stacks \
+            --stack-name S3LineProcessorStack \
+            --query 'Stacks[0].StackStatus' \
+            --output text)"
+          if [[ "$stack_status" == CREATE_* ]] || \
+            [ "$stack_status" = "REVIEW_IN_PROGRESS" ]; then
             aws cloudformation wait stack-create-complete \
               --stack-name S3LineProcessorStack
           else

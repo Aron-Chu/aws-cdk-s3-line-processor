@@ -39,7 +39,7 @@
   <text class="note" x="370" y="503">Block Public Access · SSE-S3</text><text class="note" x="370" y="523">Versioned · owner enforced</text><text class="note" x="370" y="543">TLS-only bucket policy · RETAIN</text>
 
   <rect class="card" x="660" y="445" width="270" height="115" rx="12" fill="#ffffff" stroke="#ED7100"/>
-  <text class="note-title" x="680" y="475" fill="#9a3412">Lambda IAM boundaries</text>
+  <text class="note-title" x="680" y="475" fill="#9a3412">Lambda access boundaries</text>
   <text class="note" x="680" y="503">Invoke: source account + bucket ARN</text><text class="note" x="680" y="523">Role: read incoming/* · no S3 writes</text><text class="note" x="680" y="543">Errors: reject malformed · retry AWS failures</text>
 
   <rect class="card" x="990" y="445" width="220" height="115" rx="12" fill="#ffffff" stroke="#E7157B"/>

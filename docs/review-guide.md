@@ -19,7 +19,7 @@ the resources.
 
 Production delivery prepares one real CloudFormation change set. The reviewer
 approves after that plan exists. The execute job does not rebuild anything; it
-checks the commit, account-redacted change-set ID, and complete change-set JSON
+checks the commit, account-redacted change-set ID, and normalized review fields
 against AWS, then executes that exact immutable change-set ID.
 
 ## CDK, CloudFormation, and the AWS services
@@ -115,7 +115,7 @@ relevant change reaches protected main
      -> empty plan: stop
      -> changes: Approve execute
   -> new OIDC session (15 minutes)
-  -> download artifact + compare commit, ID, and full description with AWS
+  -> download artifact + compare commit, ID, and reviewed fields with AWS
   -> execute that exact ChangeSetId + wait for CloudFormation
   -> operator runs make smoke with a separate identity
 ```
@@ -134,7 +134,8 @@ approve-before-diff gate.
 **Can Approve #2 deploy something else?** The execute job has no checkout,
 synthesis, dependency installation, or CDK deployment. It reconstructs the
 account-redacted ID using the protected account secret, compares the live ID and
-redacted `DescribeChangeSet` response with the artifact, and executes that ID.
+normalized, redacted `DescribeChangeSet` fields with the artifact, and executes
+that ID.
 
 **Is plan/execute separation perfect?** Not yet. Both jobs currently use the
 same protected environment and deploy-capable role, so Approve #1 technically

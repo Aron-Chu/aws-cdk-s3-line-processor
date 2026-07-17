@@ -46,17 +46,19 @@ validate (no AWS)
 
 The plan job synthesizes once, publishes required CDK assets, and prepares a
 commit/run-named change set without executing it. Its 30-day artifact contains
-account-redacted `DescribeChangeSet` JSON and a short resource table. A known
-CloudFormation no-change result skips execute without parsing human CDK output.
+the stable, review-relevant fields from an account-redacted `DescribeChangeSet`
+response plus a short resource table. Volatile response metadata such as the
+creation timestamp and pagination token is excluded. A known CloudFormation
+no-change result skips execute without parsing human CDK output.
 
 The execute job intentionally has no checkout, Python, Node, dependency
 installation, synthesis, or CDK command. After the second approval it:
 
 1. downloads the plan artifact;
-2. verifies the commit, redacted change-set ID, type, status, and nonempty plan;
+2. verifies the commit, redacted change-set ID, status, and nonempty plan;
 3. obtains a new 15-minute OIDC session;
 4. describes the live change set and compares both its immutable ID and its
-   account-redacted JSON with the approved artifact; and
+   normalized, account-redacted review fields with the approved artifact; and
 5. executes that ID with the AWS CLI and waits for CloudFormation.
 
 This means Approve #2 authorizes an already-created plan. `--require-approval
