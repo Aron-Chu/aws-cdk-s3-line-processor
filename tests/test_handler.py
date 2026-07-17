@@ -150,7 +150,11 @@ def test_process_decodes_spaces_and_literal_plus_and_uses_version(
             "VersionId": "version-7",
         }
     ]
-    assert result["key"] == "incoming/my file+name.json"
+    assert result["object_ref"] == handler._object_reference(
+        "input-bucket", "incoming/my file+name.json", "version-7"
+    )
+    assert "bucket" not in result
+    assert "key" not in result
     assert result["version_id"] == "version-7"
     assert result["parsed_field_count"] == 1
     assert client.bodies[0].read_sizes == [handler.MAX_FILE_BYTES + 1]
@@ -300,20 +304,31 @@ def test_handler_propagates_s3_operational_failures(
     client = FakeS3Client([PermissionError("access denied")])
     monkeypatch.setattr(handler, "s3_client", client)
 
-    with pytest.raises(PermissionError, match="access denied"):
+    with pytest.raises(
+        handler.OperationalError, match="retryable_object_processing_failure"
+    ) as raised:
         handler.lambda_handler(
             {"Records": [make_record()]},
             SimpleNamespace(aws_request_id="request-1"),
         )
 
+    assert raised.value.__cause__ is None
+    assert "access denied" not in str(raised.value)
+    assert "input-bucket" not in str(raised.value)
+
     logged = json.loads(caplog.records[-1].message)
     assert logged["status"] == "failed"
     assert logged["error_type"] == "PermissionError"
+    assert logged["object_ref"] == handler._object_reference(
+        "input-bucket", "incoming/valid.json", "version-1"
+    )
     assert caplog.records[-1].exc_info is None
     assert "access denied" not in caplog.records[-1].message
+    assert "input-bucket" not in caplog.records[-1].message
+    assert "incoming/valid.json" not in caplog.records[-1].message
     assert logged["service"] == "s3-line-processor"
     assert logged["environment"] == "sandbox"
-    assert logged["log_schema_version"] == 1
+    assert logged["log_schema_version"] == 2
 
 
 def test_handler_logs_safe_success_metadata_without_uploaded_values(
@@ -333,13 +348,27 @@ def test_handler_logs_safe_success_metadata_without_uploaded_values(
     logged = json.loads(log_message)
     assert uploaded_field not in log_message
     assert uploaded_value not in log_message
+    assert "input-bucket" not in log_message
+    assert "incoming/valid.json" not in log_message
     assert logged["status"] == "processed"
+    assert logged["object_ref"] == handler._object_reference(
+        "input-bucket", "incoming/valid.json", "version-1"
+    )
     assert "top_level_fields" not in logged
     assert logged["parsed_field_count"] == 1
     assert logged["request_id"] == "request-9"
     assert logged["service"] == "s3-line-processor"
     assert logged["environment"] == "sandbox"
-    assert logged["log_schema_version"] == 1
+    assert logged["log_schema_version"] == 2
+
+
+def test_object_reference_is_stable_and_changes_with_object_identity() -> None:
+    first = handler._object_reference("bucket", "incoming/a.json", "version-1")
+
+    assert len(first) == 64
+    assert first == handler._object_reference("bucket", "incoming/a.json", "version-1")
+    assert first != handler._object_reference("bucket", "incoming/a.json", "version-2")
+    assert first != handler._object_reference("bucket", "incoming/b.json", "version-1")
 
 
 def test_handler_rejects_reported_or_content_length_over_limit(

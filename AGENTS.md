@@ -34,10 +34,11 @@ Prefer conventional code and explicit security controls over abstractions.
 1. Make the smallest change that satisfies the requirement.
 2. Add or update focused unit and CDK assertion tests.
 3. Run `pre-commit run --all-files`, `pytest`, and `npx cdk synth`.
-4. Review `cdk diff` before any authenticated deployment.
+4. Prepare and review the commit-named CloudFormation change set before execution.
 5. Use conventional commits authored only by Aron-Chu; add no co-author
    trailers.
-6. Deploy only from protected `main`, approve `production`, then smoke-test.
+6. Deploy only from protected `main`; require `production` approval to prepare,
+   review the plan artifact, require a second approval to execute, then smoke-test.
 
 ## Documentation
 

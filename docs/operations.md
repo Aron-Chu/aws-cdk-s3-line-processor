@@ -20,13 +20,35 @@ lint, unit, coverage, and synth checks without AWS access.
 
 `VENV`, `PROFILE`, `REGION`, and `STACK` may be overridden. If WSL inherits a
 Windows temporary directory, set `TMPDIR=/tmp` before tests. Run `make help` for
-individual targets.
+individual targets. If Windows also exports `TMP` or `TEMP`, override all three:
+
+```bash
+TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
+```
 
 ## Deploy this repository: GitHub Actions
 
-A merge to protected `main` starts Deploy; manual **Run workflow** also works.
-Validation has no AWS access. The deploy job waits for **Approve** or **Reject**
-on the GitHub `production` environment before obtaining credentials.
+A merge to protected `main` starts Deploy when infrastructure, runtime,
+dependency, or deploy-workflow paths change; documentation-only merges do not.
+Manual **Run workflow** also works. Validation has no AWS access. The workflow
+then uses two jobs that both reference the protected GitHub `production`
+environment:
+
+1. First approval releases short-lived OIDC credentials to the `plan` job. It
+   runs `cdk diff`, publishes assets, prepares a commit-named CloudFormation
+   change set without executing it, and uploads the CDK diff plus change-set JSON
+   as a 30-day artifact.
+2. Review the plan job summary and `production-change-set-<commit>` artifact.
+3. Second approval releases credentials to the `deploy` job. It verifies the
+   planned commit and that the same named change set is executable, then uses
+   CDK's `execute-change-set` method.
+
+If the prepared change set has no resource changes, the workflow publishes the
+empty plan evidence and skips the execute job.
+
+The second approval therefore happens after the deployable CloudFormation plan
+exists. For a team environment, enable independent required reviewers, prevent
+self-review, and disable administrator bypass as policy permits.
 
 Required `production` environment variables:
 
@@ -44,9 +66,10 @@ and a deploy role trusted only for:
 Do not use a wildcard subject or stored AWS keys. These account-level resources
 are intentionally outside this application stack.
 
-After approval the workflow shows `cdk diff`, then deploys. Run `make smoke`
-separately with an approved operator profile; the deploy role does not need
-application-data or log-reading permissions.
+Run `make smoke` separately with an approved operator profile; the deploy role
+does not need application-data or log-reading permissions. `--require-approval
+never` is used only for the CDK CLI prompts because GitHub provides separate
+prepare and execute approval boundaries.
 
 ## External reviewer: deploy to your own sandbox
 

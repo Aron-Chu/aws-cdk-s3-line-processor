@@ -1,9 +1,3 @@
-# Super-simple local helpers. Run from WSL/Linux.
-#
-#   make setup
-#   make check
-#   make smoke PROFILE=s3-line-processor-operator
-
 VENV ?= .venv
 VENV_BIN := $(abspath $(VENV))/bin
 PY := $(VENV_BIN)/python
