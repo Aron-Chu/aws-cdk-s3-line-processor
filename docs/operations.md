@@ -35,16 +35,16 @@ then uses two jobs that both reference the protected GitHub `production`
 environment:
 
 1. First approval releases short-lived OIDC credentials to the `plan` job. It
-   runs `cdk diff`, publishes assets, prepares a commit-named CloudFormation
-   change set without executing it, and uploads the CDK diff plus change-set JSON
-   as a 30-day artifact.
+   runs `cdk diff`, and when differences exist prepares a commit/run-named
+   CloudFormation change set without executing it. The diff is uploaded as a
+   30-day artifact.
 2. Review the plan job summary and `production-change-set-<commit>` artifact.
 3. Second approval releases credentials to the `deploy` job. It verifies the
-   planned commit and that the same named change set is executable, then uses
-   CDK's `execute-change-set` method.
+   planned commit and uses CDK's `execute-change-set` method on that named plan.
 
-If the prepared change set has no resource changes, the workflow publishes the
-empty plan evidence and skips the execute job.
+If `cdk diff` shows no resource changes, the workflow skips prepare and skips
+the execute job. Plan review uses the CDK diff artifact rather than calling
+`cloudformation:DescribeChangeSet` with the deploy role.
 
 The second approval therefore happens after the deployable CloudFormation plan
 exists. For a team environment, enable independent required reviewers, prevent

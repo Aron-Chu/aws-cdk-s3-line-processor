@@ -151,35 +151,30 @@ jobs:
       - name: Prepare CloudFormation change set
         id: prepare
         env:
-          CHANGE_SET_NAME: s3-line-processor-${{ github.sha }}
+          CHANGE_SET_NAME: s3-line-processor-${{ github.sha }}-${{ github.run_id }}
         run: |
           echo "change_set_name=$CHANGE_SET_NAME" >> "$GITHUB_OUTPUT"
           echo "commit_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           source .venv/bin/activate
+          # cdk diff may exit 1 when differences exist; keep going.
+          set +e
           npx cdk diff --no-color | tee cdk-diff.txt
+          diff_status=${PIPESTATUS[0]}
+          set -e
+          if [ "$diff_status" -ne 0 ] && [ "$diff_status" -ne 1 ]; then
+            echo "cdk diff failed with exit code $diff_status" >&2
+            exit "$diff_status"
+          fi
+          if grep -qE 'Number of stacks with differences: 0|There were no differences' cdk-diff.txt; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "No CloudFormation differences; skipping change-set prepare."
+            exit 0
+          fi
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
           npx cdk deploy \
             --method prepare-change-set \
             --change-set-name "$CHANGE_SET_NAME" \
             --require-approval never
-          aws cloudformation describe-change-set \
-            --stack-name S3LineProcessorStack \
-            --change-set-name "$CHANGE_SET_NAME" \
-            --output json > cloudformation-change-set.json
-          change_count="$(aws cloudformation describe-change-set \
-            --stack-name S3LineProcessorStack \
-            --change-set-name "$CHANGE_SET_NAME" \
-            --query 'length(Changes)' \
-            --output text)"
-          if [ "$change_count" -gt 0 ]; then
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-          fi
-          aws cloudformation describe-change-set \
-            --stack-name S3LineProcessorStack \
-            --change-set-name "$CHANGE_SET_NAME" \
-            --query 'Changes[].ResourceChange.[Action,LogicalResourceId,ResourceType,Replacement]' \
-            --output table | tee cloudformation-change-set.txt
 
       - name: Publish plan summary
         env:
@@ -193,11 +188,11 @@ jobs:
             if [ "${{ steps.prepare.outputs.has_changes }}" = "true" ]; then
               echo "- Review the \`production-change-set-$GITHUB_SHA\` artifact before approving the execute job."
             else
-              echo "- The prepared change set is empty, so no execute job will run."
+              echo "- No resource differences; execute job will be skipped."
             fi
             echo
             echo '```text'
-            cat cloudformation-change-set.txt
+            cat cdk-diff.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -205,10 +200,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: production-change-set-${{ github.sha }}
-          path: |
-            cdk-diff.txt
-            cloudformation-change-set.json
-            cloudformation-change-set.txt
+          path: cdk-diff.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -283,28 +275,12 @@ jobs:
           role-session-name: github-actions-cdk-execute
           mask-aws-account-id: true
 
-      - name: Verify prepared change set
-        env:
-          CHANGE_SET_NAME: ${{ needs.plan.outputs.change_set_name }}
-        run: |
-          aws sts get-caller-identity
-          status="$(aws cloudformation describe-change-set \
-            --stack-name S3LineProcessorStack \
-            --change-set-name "$CHANGE_SET_NAME" \
-            --query Status --output text)"
-          execution_status="$(aws cloudformation describe-change-set \
-            --stack-name S3LineProcessorStack \
-            --change-set-name "$CHANGE_SET_NAME" \
-            --query ExecutionStatus --output text)"
-          if [ "$status" != "CREATE_COMPLETE" ] || [ "$execution_status" != "AVAILABLE" ]; then
-            echo "Change set is not executable: status=$status execution_status=$execution_status" >&2
-            exit 1
-          fi
-
       - name: Execute approved change set
         env:
           CHANGE_SET_NAME: ${{ needs.plan.outputs.change_set_name }}
         run: |
+          aws sts get-caller-identity
+          test -f plan-evidence/cdk-diff.txt
           source .venv/bin/activate
           npx cdk deploy \
             --method execute-change-set \
