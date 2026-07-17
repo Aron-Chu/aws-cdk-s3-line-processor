@@ -1,9 +1,8 @@
 # Live test results
 
-## Latest operator smoke (July 16, 2026)
+## Deployed smoke (July 16, 2026)
 
-Ran against deployed `S3LineProcessorStack` in `us-west-2` with the
-`s3-line-processor-operator` IAM user profile:
+Protected deploy of commit `482e89e`, then:
 
 ```bash
 make smoke PROFILE=s3-line-processor-operator
@@ -21,22 +20,28 @@ make smoke PROFILE=s3-line-processor-operator
 | `incoming/*.txt` → no invocation | Passed |
 | Rapid overwrite → each version handled | Passed |
 | Payload field names/values absent from logs | Passed |
-| Standard log context (`service`, `environment`, `log_schema_version`) | Failed — live logs omit these fields |
+| Standard log context (`service`, `environment`, `log_schema_version`) | Passed |
+| Smoke objects cleaned up | Passed |
 
-Nine outcome logs were observed. Validation behavior matches local unit tests.
+Nine outcome logs matched the matrix. Region: `us-west-2`.
 
-The missing log-context fields are present in the current repository handler
-(`_serialize_log`) and stack env vars. Sample live messages still use the older
-plain `[INFO]\t…\t{json}` shape without those keys, so this is a **stale
-deploy**, not a smoke-script false negative. Redeploy from protected `main`
-(after merging current changes), then rerun `make smoke`.
+## Fresh local setup (July 16, 2026)
 
-## Local tests
+Clean-room install with a new custom venv (not the repo `.venv`):
+
+```bash
+make setup VENV=/tmp/s3lp-fresh-venv
+make lock-check VENV=/tmp/s3lp-fresh-venv
+```
+
+Result: seeded uv venv created, hash-pinned install from `requirements.lock` succeeded,
+imports resolved, and lock-check passed.
+
+## Local unit tests
 
 ```bash
 make setup
 make test
 ```
 
-`make test` covers handler, stack assertions, and smoke-script helpers. It does
-not call AWS.
+Handler, stack assertions, and smoke helpers. No AWS calls.

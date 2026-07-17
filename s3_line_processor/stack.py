@@ -111,6 +111,7 @@ class S3LineProcessorStack(Stack):
         if not isinstance(cfn_bucket, s3.CfnBucket):
             raise TypeError("InputBucket must synthesize to AWS::S3::Bucket")
 
+        # Avoid add_event_notification: it adds an extra custom-resource Lambda.
         destination = s3_notifications.LambdaDestination(processor).bind(self, bucket)
         cfn_bucket.notification_configuration = (
             s3.CfnBucket.NotificationConfigurationProperty(
