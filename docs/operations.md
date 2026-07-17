@@ -48,7 +48,9 @@ npx cdk bootstrap aws://ACCOUNT_ID/AWS_REGION --profile ADMIN_PROFILE
 ## Deploy (recommended): GitHub Actions
 
 Deploy is intentional and manual: **Actions → Deploy → Run workflow** from
-protected `main`, then approve the GitHub `production` environment.
+protected `main`. Validation runs first; the `deploy` job then waits for
+**Approve** or **Reject** on the GitHub `production` environment before any AWS
+credentials or `cdk deploy` steps run.
 
 Required `production` environment variables (not secrets):
 
@@ -67,9 +69,9 @@ Do not use a wildcard subject. The workflow uses short-lived OIDC credentials
 deploy role, and CDK bootstrap roles are account-provisioned and are not created
 by this application stack.
 
-After approval the workflow validates the lockfile, runs tests and synth, shows
-a live `cdk diff`, then deploys. The GitHub environment name `production` is the
-approval boundary; the sample workload remains tagged/logged as `sandbox`.
+After approval the workflow shows a live `cdk diff`, then deploys. The GitHub
+environment name `production` is the approval boundary; the sample workload
+remains tagged/logged as `sandbox`.
 
 ## Deploy (alternative): manual CDK
 
