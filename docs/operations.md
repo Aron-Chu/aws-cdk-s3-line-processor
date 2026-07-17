@@ -47,8 +47,8 @@ npx cdk bootstrap aws://ACCOUNT_ID/AWS_REGION --profile ADMIN_PROFILE
 
 ## Deploy (recommended): GitHub Actions
 
-Merges to `main` run CI only. To deploy, start **Actions → Deploy → Run
-workflow** on protected `main`. After validate, the `deploy` job waits for
+A merge to protected `main` starts Deploy (manual **Run workflow** also works).
+Validate runs first with no AWS access. The `deploy` job then waits for
 **Approve** or **Reject** on the GitHub `production` environment before any AWS
 credentials or `cdk deploy` steps run.
 
