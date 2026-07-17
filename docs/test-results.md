@@ -27,15 +27,15 @@ Nine outcome logs matched the matrix. Region: `us-west-2`.
 
 ## Fresh local setup (July 16, 2026)
 
-Clean-room install with a new custom venv (not the repo `.venv`):
+Clean-room install and full validation with a new absolute venv:
 
 ```bash
 make setup VENV=/tmp/s3lp-fresh-venv
-make lock-check VENV=/tmp/s3lp-fresh-venv
+TMPDIR=/tmp make check VENV=/tmp/s3lp-fresh-venv
 ```
 
-Result: seeded uv venv created, hash-pinned install from `requirements.lock` succeeded,
-imports resolved, and lock-check passed.
+Result: seeded uv venv and hash-pinned install succeeded; lock verification,
+pre-commit, 61 tests (96.23% coverage), and CDK synth passed.
 
 ## Local unit tests
 

@@ -5,15 +5,16 @@
 #   make smoke PROFILE=s3-line-processor-operator
 
 VENV ?= .venv
-PY := $(VENV)/bin/python
-PIP := $(VENV)/bin/pip
-UV := $(VENV)/bin/uv
+VENV_BIN := $(abspath $(VENV))/bin
+PY := $(VENV_BIN)/python
+PIP := $(VENV_BIN)/pip
+UV := $(VENV_BIN)/uv
 PROFILE ?=
 REGION ?= us-west-2
 STACK ?= S3LineProcessorStack
 LOCK_ARGS := --quiet --python-version 3.14 --universal --generate-hashes --no-annotate --custom-compile-command "make lock"
 
-.PHONY: help setup lock lock-check lint test synth check smoke
+.PHONY: help setup lock lock-check lint test synth check aws-check bootstrap diff deploy smoke
 
 help:
 	@echo "make setup                              Create/reuse .venv, install deps, enable pre-commit"
@@ -23,6 +24,10 @@ help:
 	@echo "make test                               Run local pytest (no AWS)"
 	@echo "make synth                              Run cdk synth"
 	@echo "make check                              lock-check + lint + test + synth"
+	@echo "make aws-check PROFILE=<profile>        Verify the target AWS identity"
+	@echo "make bootstrap PROFILE=<profile>        Bootstrap PROFILE/REGION once"
+	@echo "make diff PROFILE=<profile>             Review the live CDK diff"
+	@echo "make deploy PROFILE=<profile>           check + diff + local sandbox deploy"
 	@echo "make smoke PROFILE=<cli-profile>        Live AWS smoke (IAM user or SSO profile)"
 	@echo ""
 	@echo "Example: make smoke PROFILE=s3-line-processor-operator"
@@ -70,9 +75,28 @@ test:
 
 synth:
 	@test -x "$(PY)" || { echo "Missing $(PY). Run: make setup"; exit 1; }
-	PATH="$(CURDIR)/$(VENV)/bin:$$PATH" npx cdk synth
+	PATH="$(VENV_BIN):$$PATH" npx cdk synth
 
 check: lock-check lint test synth
+
+aws-check:
+	@test -n "$(PROFILE)" || { echo "Usage: make $@ PROFILE=<aws-profile> [REGION=$(REGION)]"; exit 2; }
+	aws sts get-caller-identity --profile "$(PROFILE)" --region "$(REGION)"
+
+bootstrap: aws-check
+	@test -x "$(PY)" || { echo "Missing $(PY). Run: make setup"; exit 1; }
+	@account=$$(aws sts get-caller-identity --profile "$(PROFILE)" --query Account --output text); \
+	PATH="$(VENV_BIN):$$PATH" AWS_REGION="$(REGION)" AWS_DEFAULT_REGION="$(REGION)" \
+		npx cdk bootstrap "aws://$$account/$(REGION)" --profile "$(PROFILE)"
+
+diff: aws-check
+	@test -x "$(PY)" || { echo "Missing $(PY). Run: make setup"; exit 1; }
+	PATH="$(VENV_BIN):$$PATH" AWS_REGION="$(REGION)" AWS_DEFAULT_REGION="$(REGION)" \
+		npx cdk diff --profile "$(PROFILE)"
+
+deploy: check diff
+	PATH="$(VENV_BIN):$$PATH" AWS_REGION="$(REGION)" AWS_DEFAULT_REGION="$(REGION)" \
+		npx cdk deploy --profile "$(PROFILE)"
 
 smoke:
 	@test -x "$(PY)" || { echo "Missing $(PY). Run: make setup"; exit 1; }
