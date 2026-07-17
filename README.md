@@ -39,4 +39,5 @@ Deploy, smoke-test, and clean up: [docs/operations.md](docs/operations.md).
 | --- | --- |
 | Deployment and maintenance | [docs/operations.md](docs/operations.md) |
 | Design, security, and failure behavior | [docs/design.md](docs/design.md) |
+| What was intentionally not added | [docs/intentional-omissions.md](docs/intentional-omissions.md) |
 | Live verification results | [docs/test-results.md](docs/test-results.md) |

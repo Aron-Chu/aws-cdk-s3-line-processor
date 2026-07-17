@@ -1,5 +1,7 @@
 # Deployment and maintenance
 
+Local Make targets and examples assume **Ubuntu/WSL** (or similar Linux).
+
 ## Prerequisites
 
 - Python 3.14, Node.js 24+, AWS CLI, and an approved non-root AWS identity

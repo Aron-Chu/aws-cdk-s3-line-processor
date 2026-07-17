@@ -13,6 +13,10 @@ LOG_SCHEMA_VERSION = 1
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+# Keep CloudWatch focused on app outcome logs; botocore INFO is credential noise.
+logging.getLogger("botocore").setLevel(logging.WARNING)
+logging.getLogger("boto3").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 s3_client = boto3.client("s3")
 
 
