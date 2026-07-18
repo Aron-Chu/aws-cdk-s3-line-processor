@@ -14,6 +14,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "pyproject.toml"
+      - "requirements.lock"
       - "requirements*.txt"
       - "s3_line_processor/**"
   workflow_dispatch:
@@ -24,6 +25,33 @@ permissions:
 concurrency:
   group: production-deploy
   cancel-in-progress: false
+
+env:
+  CHANGE_SET_PROJECTION: >-
+    {
+      ChangeSetName,
+      ChangeSetId,
+      StackId,
+      StackName,
+      Description,
+      Parameters,
+      ExecutionStatus,
+      Status,
+      StatusReason,
+      StackDriftStatus,
+      NotificationARNs,
+      RollbackConfiguration,
+      Capabilities,
+      Tags,
+      Changes,
+      IncludeNestedStacks,
+      ParentChangeSetId,
+      RootChangeSetId,
+      OnStackFailure,
+      ImportExistingResources,
+      DeploymentMode,
+      DeploymentConfig
+    }
 
 jobs:
   validate:
@@ -83,6 +111,7 @@ jobs:
       change_set_name: ${{ steps.prepare.outputs.change_set_name }}
       commit_sha: ${{ steps.prepare.outputs.commit_sha }}
       has_changes: ${{ steps.prepare.outputs.has_changes }}
+      change_set_id: ${{ steps.prepare.outputs.change_set_id }}
     permissions:
       contents: read
       id-token: write
@@ -132,49 +161,72 @@ jobs:
           source .venv/bin/activate
           npx cdk synth --quiet
 
-      - name: Mask deploy role ARN
-        env:
-          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
-        run: echo "::add-mask::$AWS_ROLE_ARN"
-
       - name: Configure temporary AWS credentials
         uses: aws-actions/configure-aws-credentials@517a711dbcd0e402f90c77e7e2f81e849156e31d # v6.2.2
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: github-actions-cdk-deploy
+          role-session-name: cdk-plan-${{ github.run_id }}
+          role-duration-seconds: 900
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+          unset-current-credentials: true
 
       - name: Verify AWS identity
-        run: aws sts get-caller-identity
+        run: aws sts get-caller-identity --query Account --output text >/dev/null
 
       - name: Prepare CloudFormation change set
         id: prepare
         env:
           CHANGE_SET_NAME: s3-line-processor-${{ github.sha }}-${{ github.run_id }}
+          EXPECTED_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
+          [[ "$EXPECTED_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]
           echo "change_set_name=$CHANGE_SET_NAME" >> "$GITHUB_OUTPUT"
           echo "commit_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           source .venv/bin/activate
-          # cdk diff may exit 1 when differences exist; keep going.
-          set +e
-          npx cdk diff --no-color | tee cdk-diff.txt
-          diff_status=${PIPESTATUS[0]}
-          set -e
-          if [ "$diff_status" -ne 0 ] && [ "$diff_status" -ne 1 ]; then
-            echo "cdk diff failed with exit code $diff_status" >&2
-            exit "$diff_status"
-          fi
-          if grep -qE 'Number of stacks with differences: 0|There were no differences' cdk-diff.txt; then
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-            echo "No CloudFormation differences; skipping change-set prepare."
-            exit 0
-          fi
-          echo "has_changes=true" >> "$GITHUB_OUTPUT"
           npx cdk deploy S3LineProcessorStack \
             --method prepare-change-set \
             --change-set-name "$CHANGE_SET_NAME" \
             --require-approval never
+          mkdir -p plan-evidence
+          aws cloudformation describe-change-set \
+            --stack-name S3LineProcessorStack \
+            --change-set-name "$CHANGE_SET_NAME" \
+            --output json > /tmp/change-set.json
+          status="$(jq -r '.Status' /tmp/change-set.json)"
+          execution_status="$(jq -r '.ExecutionStatus' /tmp/change-set.json)"
+          status_reason="$(jq -r '.StatusReason // ""' /tmp/change-set.json)"
+          change_count="$(jq '.Changes | length' /tmp/change-set.json)"
+          change_set_id="$(jq -r '.ChangeSetId' /tmp/change-set.json)"
+          redacted_change_set_id="${change_set_id/$EXPECTED_ACCOUNT_ID/<ACCOUNT_ID>}"
+          test "$redacted_change_set_id" != "$change_set_id"
+          echo "change_set_id=$redacted_change_set_id" >> "$GITHUB_OUTPUT"
+          if [ "$status" = "FAILED" ] && { \
+            [[ "$status_reason" == "The submitted information didn't contain changes."* ]] || \
+            [[ "$status_reason" == "No updates are to be performed."* ]]; \
+          }; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          elif [ "$status" = "CREATE_COMPLETE" ] && \
+            [ "$execution_status" = "AVAILABLE" ] && \
+            [ "$change_count" -gt 0 ]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Prepared change set is not reviewable: status=$status execution_status=$execution_status" >&2
+            exit 1
+          fi
+          jq -S "$CHANGE_SET_PROJECTION" /tmp/change-set.json | \
+            sed "s/$EXPECTED_ACCOUNT_ID/<ACCOUNT_ID>/g" \
+              > plan-evidence/change-set.json
+          jq -r '
+            (
+              ["Action", "Logical ID", "Resource type", "Replacement"],
+              ["---", "---", "---", "---"],
+              (.Changes[] | .ResourceChange |
+                [.Action, .LogicalResourceId, .ResourceType, (.Replacement // "n/a")])
+            ) |
+            "| " + join(" | ") + " |"
+          ' plan-evidence/change-set.json > plan-evidence/change-set.md
 
       - name: Publish plan summary
         env:
@@ -186,21 +238,19 @@ jobs:
             echo "- Commit: \`$GITHUB_SHA\`"
             echo "- Change set: \`$CHANGE_SET_NAME\`"
             if [ "${{ steps.prepare.outputs.has_changes }}" = "true" ]; then
-              echo "- Review the \`production-change-set-$GITHUB_SHA\` artifact before approving the execute job."
+              echo "- Review the exact CloudFormation plan below and its JSON artifact before approving execution."
             else
-              echo "- No resource differences; execute job will be skipped."
+              echo "- The prepared change set is empty; execution will be skipped."
             fi
             echo
-            echo '```text'
-            cat cdk-diff.txt
-            echo '```'
+            cat plan-evidence/change-set.md
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload immutable plan evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: production-change-set-${{ github.sha }}
-          path: cdk-diff.txt
+          name: production-change-set-${{ github.sha }}-${{ github.run_id }}
+          path: plan-evidence/
           if-no-files-found: error
           retention-days: 30
 
@@ -208,81 +258,76 @@ jobs:
     needs: plan
     if: needs.plan.outputs.has_changes == 'true'
     permissions:
-      contents: read
       id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
     steps:
-      - name: Verify planned commit
-        env:
-          PLANNED_SHA: ${{ needs.plan.outputs.commit_sha }}
-        run: |
-          if [ "$GITHUB_SHA" != "$PLANNED_SHA" ]; then
-            echo "Prepared commit $PLANNED_SHA does not match execution commit $GITHUB_SHA." >&2
-            exit 1
-          fi
-
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.14"
-          cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
-            requirements.lock
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "24"
-          cache: npm
-
-      - name: Install dependencies
-        run: |
-          npm ci
-          python -m venv .venv
-          .venv/bin/python -m pip install --require-hashes -r requirements.lock
-
-      - name: Synthesize
-        run: |
-          source .venv/bin/activate
-          npx cdk synth --quiet
-
       - name: Download approved plan evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: production-change-set-${{ github.sha }}
+          name: production-change-set-${{ github.sha }}-${{ github.run_id }}
           path: plan-evidence
 
-      - name: Mask deploy role ARN
+      - name: Verify approved evidence
         env:
-          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
-        run: echo "::add-mask::$AWS_ROLE_ARN"
+          CHANGE_SET_NAME: ${{ needs.plan.outputs.change_set_name }}
+          PLANNED_SHA: ${{ needs.plan.outputs.commit_sha }}
+          CHANGE_SET_ID: ${{ needs.plan.outputs.change_set_id }}
+        run: |
+          test "$GITHUB_SHA" = "$PLANNED_SHA"
+          test "$(jq -r '.ChangeSetName' plan-evidence/change-set.json)" = "$CHANGE_SET_NAME"
+          test "$(jq -r '.ChangeSetId' plan-evidence/change-set.json)" = "$CHANGE_SET_ID"
+          test "$(jq -r '.Status' plan-evidence/change-set.json)" = "CREATE_COMPLETE"
+          test "$(jq -r '.ExecutionStatus' plan-evidence/change-set.json)" = "AVAILABLE"
+          test "$(jq '.Changes | length' plan-evidence/change-set.json)" -gt 0
 
       - name: Configure temporary AWS credentials
         uses: aws-actions/configure-aws-credentials@517a711dbcd0e402f90c77e7e2f81e849156e31d # v6.2.2
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: github-actions-cdk-execute
+          role-session-name: cdk-execute-${{ github.run_id }}
+          role-duration-seconds: 900
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+          unset-current-credentials: true
 
       - name: Execute approved change set
         env:
           CHANGE_SET_NAME: ${{ needs.plan.outputs.change_set_name }}
+          APPROVED_CHANGE_SET_ID: ${{ needs.plan.outputs.change_set_id }}
+          EXPECTED_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
-          aws sts get-caller-identity
-          test -f plan-evidence/cdk-diff.txt
-          source .venv/bin/activate
-          npx cdk deploy S3LineProcessorStack \
-            --method execute-change-set \
+          [[ "$EXPECTED_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]
+          aws sts get-caller-identity --query Account --output text >/dev/null
+          aws cloudformation describe-change-set \
+            --stack-name S3LineProcessorStack \
             --change-set-name "$CHANGE_SET_NAME" \
-            --require-approval never
+            --output json > /tmp/live-change-set.json
+          live_id="$(jq -r '.ChangeSetId' /tmp/live-change-set.json)"
+          approved_id="${APPROVED_CHANGE_SET_ID/<ACCOUNT_ID>/$EXPECTED_ACCOUNT_ID}"
+          test "$live_id" = "$approved_id"
+          jq -S "$CHANGE_SET_PROJECTION" /tmp/live-change-set.json | \
+            sed "s/$EXPECTED_ACCOUNT_ID/<ACCOUNT_ID>/g" \
+              > /tmp/reviewed-live-change-set.json
+          jq -S -c . plan-evidence/change-set.json > /tmp/approved-change-set.json
+          jq -S -c . /tmp/reviewed-live-change-set.json > /tmp/live-change-set.jsonl
+          cmp --silent /tmp/approved-change-set.json /tmp/live-change-set.jsonl
+          aws cloudformation execute-change-set \
+            --stack-name S3LineProcessorStack \
+            --change-set-name "$live_id"
+          aws cloudformation wait stack-exists \
+            --stack-name S3LineProcessorStack
+          stack_status="$(aws cloudformation describe-stacks \
+            --stack-name S3LineProcessorStack \
+            --query 'Stacks[0].StackStatus' \
+            --output text)"
+          if [[ "$stack_status" == CREATE_* ]] || \
+            [ "$stack_status" = "REVIEW_IN_PROGRESS" ]; then
+            aws cloudformation wait stack-create-complete \
+              --stack-name S3LineProcessorStack
+          else
+            aws cloudformation wait stack-update-complete \
+              --stack-name S3LineProcessorStack
+          fi

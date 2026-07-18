@@ -326,6 +326,8 @@ def test_handler_propagates_s3_operational_failures(
     assert "access denied" not in caplog.records[-1].message
     assert "input-bucket" not in caplog.records[-1].message
     assert "incoming/valid.json" not in caplog.records[-1].message
+    assert "etag-1" not in caplog.records[-1].message
+    assert "etag" not in logged
     assert logged["service"] == "s3-line-processor"
     assert logged["environment"] == "sandbox"
     assert logged["log_schema_version"] == 2
@@ -350,6 +352,8 @@ def test_handler_logs_safe_success_metadata_without_uploaded_values(
     assert uploaded_value not in log_message
     assert "input-bucket" not in log_message
     assert "incoming/valid.json" not in log_message
+    assert "etag-1" not in log_message
+    assert "etag" not in logged
     assert logged["status"] == "processed"
     assert logged["object_ref"] == handler._object_reference(
         "input-bucket", "incoming/valid.json", "version-1"
