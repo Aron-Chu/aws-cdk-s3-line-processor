@@ -256,6 +256,29 @@ def test_handler_reports_permanent_validation_failure_and_continues(
                 "eventSource": "aws:s3",
                 "s3": {
                     "bucket": {"name": "input-bucket"},
+                    "object": {
+                        "key": "incoming/a.json",
+                        "sequencer": ["not-a-string"],
+                    },
+                },
+            },
+            "invalid_s3_record",
+        ),
+        (
+            {
+                "eventSource": "aws:s3",
+                "s3": {
+                    "bucket": {"name": "input-bucket"},
+                    "object": {"key": "incoming/a.json", "size": -1},
+                },
+            },
+            "invalid_s3_record",
+        ),
+        (
+            {
+                "eventSource": "aws:s3",
+                "s3": {
+                    "bucket": {"name": "input-bucket"},
                     "object": {"key": "incoming/a.json", "versionId": 7},
                 },
             },
@@ -294,6 +317,52 @@ def test_handler_rejects_malformed_records_without_s3_read(
 
     assert response["results"][0]["status"] == "rejected"
     assert response["results"][0]["reason_code"] == reason_code
+    assert client.calls == []
+
+
+def test_handler_omits_untrusted_metadata_from_rejection_logs(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    client = FakeS3Client([])
+    monkeypatch.setattr(handler, "s3_client", client)
+    record = make_record()
+    record["s3"]["object"].update(
+        {
+            "versionId": {"attacker_field": "attacker_value"},
+            "sequencer": ["attacker_sequence"],
+            "size": {"attacker_size": 1},
+        }
+    )
+
+    response = handler.lambda_handler(
+        {"Records": [record]}, SimpleNamespace(aws_request_id="request-1")
+    )
+
+    logged_message = caplog.records[-1].message
+    logged = json.loads(logged_message)
+    assert response["results"][0]["reason_code"] == "invalid_s3_record"
+    assert logged["version_id"] is None
+    assert logged["sequencer"] is None
+    assert logged["reported_object_size"] is None
+    assert "attacker" not in logged_message
+    assert client.calls == []
+
+
+def test_handler_rejects_oversized_version_metadata_without_logging_it(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    client = FakeS3Client([])
+    monkeypatch.setattr(handler, "s3_client", client)
+    oversized_version = "v" * (handler.MAX_LOG_METADATA_BYTES + 1)
+    record = make_record(version_id=oversized_version)
+
+    response = handler.lambda_handler(
+        {"Records": [record]}, SimpleNamespace(aws_request_id="request-1")
+    )
+
+    logged_message = caplog.records[-1].message
+    assert response["results"][0]["reason_code"] == "invalid_s3_record"
+    assert oversized_version not in logged_message
     assert client.calls == []
 
 

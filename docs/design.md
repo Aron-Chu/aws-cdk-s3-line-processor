@@ -38,9 +38,10 @@ stack exposes no interactive private application.
 | JSON | A single object (`{...}`); no arrays, scalars, `NaN`, `Infinity`, or `-Infinity` |
 | Rejected | Empty body, multiple lines, invalid UTF-8, invalid JSON, non-object JSON |
 
-Successful logs include a SHA-256 `object_ref`, version/sequencer metadata,
-sizes, and `parsed_field_count`. The reference is derived from bucket, decoded
-key, and version ID with length-delimited inputs, so repeated delivery of the
+Successful logs include a SHA-256 `object_ref`, bounded scalar
+version/sequencer metadata, sizes, and `parsed_field_count`. Invalid or oversized
+metadata is omitted rather than serialized. The reference is derived from bucket,
+decoded key, and version ID with length-delimited inputs, so repeated delivery of the
 same object version remains correlatable without logging the raw bucket or key.
 It is pseudonymous correlation metadata, not a claim of irreversible
 anonymization. Logs never include object contents, parsed values, field names,

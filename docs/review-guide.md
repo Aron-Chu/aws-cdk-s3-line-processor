@@ -118,7 +118,8 @@ relevant change reaches protected main
      -> changes: Approve exact plan execution
   -> new OIDC session (15 minutes)
   -> download artifact + compare commit, ID, and reviewed fields with AWS
-  -> execute that exact ChangeSetId + wait for CloudFormation
+  -> execute that exact ChangeSetId with a retry token
+  -> confirm execution started + wait for the final CloudFormation status
   -> operator runs make smoke with a separate identity
 ```
 

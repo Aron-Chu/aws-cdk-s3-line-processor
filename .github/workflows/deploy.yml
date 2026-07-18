@@ -44,6 +44,7 @@ env:
       Capabilities,
       Tags,
       Changes,
+      ChangeSetType,
       IncludeNestedStacks,
       ParentChangeSetId,
       RootChangeSetId,
@@ -306,6 +307,14 @@ jobs:
             --change-set-name "$CHANGE_SET_NAME" \
             --output json > /tmp/live-change-set.json
           live_id="$(jq -r '.ChangeSetId' /tmp/live-change-set.json)"
+          change_set_type="$(jq -r '.ChangeSetType' /tmp/live-change-set.json)"
+          case "$change_set_type" in
+            CREATE|UPDATE) ;;
+            *)
+              echo "Unsupported change-set type: $change_set_type" >&2
+              exit 1
+              ;;
+          esac
           approved_id="${APPROVED_CHANGE_SET_ID/<ACCOUNT_ID>/$EXPECTED_ACCOUNT_ID}"
           test "$live_id" = "$approved_id"
           jq -S "$CHANGE_SET_PROJECTION" /tmp/live-change-set.json | \
@@ -316,18 +325,44 @@ jobs:
           cmp --silent /tmp/approved-change-set.json /tmp/live-change-set.jsonl
           aws cloudformation execute-change-set \
             --stack-name S3LineProcessorStack \
-            --change-set-name "$live_id"
-          aws cloudformation wait stack-exists \
-            --stack-name S3LineProcessorStack
-          stack_status="$(aws cloudformation describe-stacks \
-            --stack-name S3LineProcessorStack \
-            --query 'Stacks[0].StackStatus' \
-            --output text)"
-          if [[ "$stack_status" == CREATE_* ]] || \
-            [ "$stack_status" = "REVIEW_IN_PROGRESS" ]; then
+            --change-set-name "$live_id" \
+            --client-request-token "execute-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          execution_started=false
+          for _ in $(seq 1 60); do
+            execution_status="$(aws cloudformation describe-change-set \
+              --stack-name S3LineProcessorStack \
+              --change-set-name "$live_id" \
+              --query 'ExecutionStatus' \
+              --output text)"
+            case "$execution_status" in
+              EXECUTE_IN_PROGRESS|EXECUTE_COMPLETE)
+                execution_started=true
+                break
+                ;;
+              AVAILABLE)
+                sleep 2
+                ;;
+              *)
+                echo "Change-set execution entered unexpected state: $execution_status" >&2
+                exit 1
+                ;;
+            esac
+          done
+          if [ "$execution_started" != "true" ]; then
+            echo "Change-set execution did not start within 120 seconds." >&2
+            exit 1
+          fi
+          if [ "$change_set_type" = "CREATE" ]; then
             aws cloudformation wait stack-create-complete \
               --stack-name S3LineProcessorStack
+            expected_status="CREATE_COMPLETE"
           else
             aws cloudformation wait stack-update-complete \
               --stack-name S3LineProcessorStack
+            expected_status="UPDATE_COMPLETE"
           fi
+          final_status="$(aws cloudformation describe-stacks \
+            --stack-name S3LineProcessorStack \
+            --query 'Stacks[0].StackStatus' \
+            --output text)"
+          test "$final_status" = "$expected_status"

@@ -14,3 +14,4 @@
 | Object/noncurrent-version expiration | No approved data-retention period exists, and automatic deletion is destructive. | Legal/operations approve a retention and recovery policy |
 | Continuous drift detection | Merge-triggered change sets reconcile declared updates but do not continuously scan for console drift. | Multiple operators or compliance requirements justify scheduled drift reporting |
 | CloudFormation termination protection | Retaining the bucket and policy protects data, but it does not prevent deletion of the stack's control-plane resources. | Accidental stack deletion becomes an operational risk and the owner accepts the recovery workflow |
+| S3 data-event audit trail | CloudTrail data events are an account/platform monitoring concern and can add per-event cost. The application stack does not create a second logging destination. | Production access investigations or compliance require object-level API history |

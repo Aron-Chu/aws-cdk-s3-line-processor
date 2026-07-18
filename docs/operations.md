@@ -61,7 +61,9 @@ installation, synthesis, or CDK command. After the second approval it:
 3. obtains a new 15-minute OIDC session;
 4. describes the live change set and compares both its immutable ID and its
    normalized, account-redacted review fields with the approved artifact; and
-5. executes that ID with the AWS CLI and waits for CloudFormation.
+5. executes that ID with an idempotent request token, waits until CloudFormation
+   acknowledges execution, then waits for the matching create or update to
+   finish and verifies the final stack status.
 
 This means the second approval authorizes an already-created plan.
 `--require-approval never` only disables the CDK terminal prompt; it does not

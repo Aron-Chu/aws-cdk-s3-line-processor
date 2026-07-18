@@ -20,8 +20,11 @@ def test_execute_job_only_verifies_and_executes_frozen_plan() -> None:
     assert "aws cloudformation describe-change-set" in EXECUTE_JOB
     assert 'test "$live_id" = "$approved_id"' in EXECUTE_JOB
     assert "aws cloudformation execute-change-set" in EXECUTE_JOB
-    assert '"$stack_status" = "REVIEW_IN_PROGRESS"' in EXECUTE_JOB
-    assert ".ChangeSetType" not in WORKFLOW
+    assert "--client-request-token" in EXECUTE_JOB
+    assert "EXECUTE_IN_PROGRESS|EXECUTE_COMPLETE" in EXECUTE_JOB
+    assert 'if [ "$change_set_type" = "CREATE" ]' in EXECUTE_JOB
+    assert 'test "$final_status" = "$expected_status"' in EXECUTE_JOB
+    assert "ChangeSetType" in WORKFLOW
 
 
 def test_deploy_trigger_covers_the_python_lockfile() -> None:
