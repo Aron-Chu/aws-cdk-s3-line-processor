@@ -17,10 +17,12 @@ the Python constructs into a CloudFormation template. CloudFormation—not the
 GitHub runner or CDK library—is the AWS control plane that creates and updates
 the resources.
 
-Production delivery prepares one real CloudFormation change set. The reviewer
-approves after that plan exists. The execute job does not rebuild anything; it
-checks the commit, account-redacted change-set ID, and normalized review fields
-against AWS, then executes that exact immutable change-set ID.
+Production delivery uses one Deploy workflow. The first approval authorizes AWS
+plan preparation without changing the application stack. After the real
+CloudFormation change set exists, the second approval authorizes that exact
+plan. The execute job does not rebuild anything; it checks the commit,
+account-redacted change-set ID, and normalized review fields against AWS, then
+executes that immutable ID.
 
 ## CDK, CloudFormation, and the AWS services
 
@@ -30,7 +32,7 @@ against AWS, then executes that exact immutable change-set ID.
 | Cloud assembly | Local generated templates and asset manifests | `cdk.out/`; generated and never committed |
 | CloudFormation | Calculates change sets and mutates AWS resources transactionally | `S3LineProcessorStack` |
 | AWS services | Run the deployed workload | S3, Lambda, IAM, CloudWatch Logs |
-| GitHub Actions | Validates Git, requests short-lived AWS credentials, and orchestrates prepare/execute | `.github/workflows/` |
+| GitHub Actions | Runs credential-free PR CI and orchestrates protected main prepare/execute | `.github/workflows/` |
 
 CDK is not a second deployment engine. It synthesizes and publishes the Lambda
 asset, then asks CloudFormation to prepare the plan. The execute job calls
@@ -98,7 +100,7 @@ and dependency-maintenance surface.
 | `tests/test_stack.py` | Assertions that security controls survive refactoring in the synthesized template |
 | `tests/test_handler.py` | Unit coverage for valid, malformed, sensitive, and operational cases |
 | `scripts/live_smoke_test.py` | Post-deploy proof against real S3, Lambda, and CloudWatch Logs |
-| `.github/workflows/ci.yml` | Credential-free pull-request and main validation |
+| `.github/workflows/ci.yml` | Credential-free pull-request validation |
 | `.github/workflows/deploy.yml` | Protected prepare, review, exact execute, and no-op skip workflow |
 | `Makefile` | Short, repeatable local validation, deployment, and smoke commands |
 | `requirements.lock` / `package-lock.json` | Reproducible Python development and CDK CLI dependency graphs |
@@ -108,15 +110,16 @@ and dependency-maintenance surface.
 ```text
 relevant change reaches protected main
   -> validate (no AWS credentials)
-  -> Approve plan
+  -> Approve AWS plan preparation (no stack execution)
   -> OIDC session (15 minutes)
   -> synth + publish Lambda asset + prepare CloudFormation change set
   -> DescribeChangeSet JSON + short table
      -> empty plan: stop
-     -> changes: Approve execute
+     -> changes: Approve exact plan execution
   -> new OIDC session (15 minutes)
   -> download artifact + compare commit, ID, and reviewed fields with AWS
-  -> execute that exact ChangeSetId + wait for CloudFormation
+  -> execute that exact ChangeSetId with a retry token
+  -> confirm execution started + wait for the final CloudFormation status
   -> operator runs make smoke with a separate identity
 ```
 
@@ -126,10 +129,11 @@ application stack change set.
 
 ## Questions a reviewer may press on
 
-**Is this GitOps?** Git is the desired state, Actions/CDK translate it, and
-CloudFormation is the only service that mutates the application stack. The
-second approval is based on an already-prepared plan, so it is not an
-approve-before-diff gate.
+**Is this GitOps?** It is Git-driven, GitOps-style delivery: Git stores the
+versioned desired state, Actions/CDK translate it, and CloudFormation is the
+only service that mutates the application stack. It is not continuous drift
+reconciliation. The second approval is based on an already-prepared plan, so it
+is not an approve-before-diff gate.
 
 **Can Approve #2 deploy something else?** The execute job has no checkout,
 synthesis, dependency installation, or CDK deployment. It reconstructs the

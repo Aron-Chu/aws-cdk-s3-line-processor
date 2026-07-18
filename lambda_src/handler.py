@@ -11,6 +11,7 @@ MAX_FILE_BYTES = int(os.environ.get("MAX_FILE_BYTES", 1024 * 1024))
 SERVICE_NAME = os.environ.get("SERVICE_NAME", "s3-line-processor")
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "sandbox")
 LOG_SCHEMA_VERSION = 2
+MAX_LOG_METADATA_BYTES = 1024
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -89,23 +90,29 @@ def process_s3_record(record: dict[str, Any]) -> dict[str, Any]:
         raise ValidationError("invalid_s3_record")
 
     object_key = unquote_plus(encoded_key)
-    version_id = object_record.get("versionId")
-    if version_id == "null":
-        version_id = None
-    elif version_id is not None and not isinstance(version_id, str):
+    raw_version_id = object_record.get("versionId")
+    version_id = _normalized_version_id(raw_version_id)
+    if raw_version_id is not None and version_id is None and raw_version_id != "null":
+        raise ValidationError("invalid_s3_record")
+    raw_sequencer = object_record.get("sequencer")
+    sequencer = _bounded_string(raw_sequencer)
+    if raw_sequencer is not None and sequencer is None:
+        raise ValidationError("invalid_s3_record")
+    raw_reported_size = object_record.get("size")
+    reported_size = _nonnegative_integer(raw_reported_size)
+    if raw_reported_size is not None and reported_size is None:
         raise ValidationError("invalid_s3_record")
     object_context = {
         "object_ref": _object_reference(bucket_name, object_key, version_id),
         "version_id": version_id,
-        "sequencer": object_record.get("sequencer"),
-        "reported_object_size": object_record.get("size"),
+        "sequencer": sequencer,
+        "reported_object_size": reported_size,
     }
 
     if not object_key.startswith("incoming/") or not object_key.endswith(".json"):
         raise ValidationError("unexpected_object_key", object_context)
 
-    reported_size = object_record.get("size")
-    if isinstance(reported_size, int) and reported_size > MAX_FILE_BYTES:
+    if reported_size is not None and reported_size > MAX_FILE_BYTES:
         raise ValidationError("object_too_large", object_context)
 
     get_object_parameters = {"Bucket": bucket_name, "Key": object_key}
@@ -114,7 +121,7 @@ def process_s3_record(record: dict[str, Any]) -> dict[str, Any]:
 
     response = s3_client.get_object(**get_object_parameters)
     body = response["Body"]
-    content_length = response.get("ContentLength")
+    content_length = _nonnegative_integer(response.get("ContentLength"))
     object_context["content_length"] = content_length
 
     if isinstance(content_length, int) and content_length > MAX_FILE_BYTES:
@@ -201,9 +208,7 @@ def _safe_record_context(record: Any) -> dict[str, Any]:
         encoded_key = object_record.get("key")
         object_key = unquote_plus(encoded_key) if isinstance(encoded_key, str) else None
         bucket_name = bucket_record.get("name")
-        version_id = object_record.get("versionId")
-        if version_id == "null":
-            version_id = None
+        version_id = _normalized_version_id(object_record.get("versionId"))
         object_ref = (
             _object_reference(bucket_name, object_key, version_id)
             if isinstance(bucket_name, str)
@@ -214,11 +219,35 @@ def _safe_record_context(record: Any) -> dict[str, Any]:
         return {
             "object_ref": object_ref,
             "version_id": version_id,
-            "sequencer": object_record.get("sequencer"),
-            "reported_object_size": object_record.get("size"),
+            "sequencer": _bounded_string(object_record.get("sequencer")),
+            "reported_object_size": _nonnegative_integer(object_record.get("size")),
         }
     except (KeyError, TypeError):  # fmt: skip
         return {}
+
+
+def _bounded_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        encoded_value = value.encode("utf-8")
+    except UnicodeEncodeError:
+        return None
+    if len(encoded_value) > MAX_LOG_METADATA_BYTES:
+        return None
+    return value
+
+
+def _normalized_version_id(value: Any) -> str | None:
+    if value is None or value == "null":
+        return None
+    return _bounded_string(value)
+
+
+def _nonnegative_integer(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 def _object_reference(bucket: str, key: str, version_id: str | None) -> str:

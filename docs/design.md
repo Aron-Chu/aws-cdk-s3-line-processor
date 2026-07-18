@@ -38,9 +38,10 @@ stack exposes no interactive private application.
 | JSON | A single object (`{...}`); no arrays, scalars, `NaN`, `Infinity`, or `-Infinity` |
 | Rejected | Empty body, multiple lines, invalid UTF-8, invalid JSON, non-object JSON |
 
-Successful logs include a SHA-256 `object_ref`, version/sequencer metadata,
-sizes, and `parsed_field_count`. The reference is derived from bucket, decoded
-key, and version ID with length-delimited inputs, so repeated delivery of the
+Successful logs include a SHA-256 `object_ref`, bounded scalar
+version/sequencer metadata, sizes, and `parsed_field_count`. Invalid or oversized
+metadata is omitted rather than serialized. The reference is derived from bucket,
+decoded key, and version ID with length-delimited inputs, so repeated delivery of the
 same object version remains correlatable without logging the raw bucket or key.
 It is pseudonymous correlation metadata, not a claim of irreversible
 anonymization. Logs never include object contents, parsed values, field names,
@@ -51,10 +52,10 @@ uploads.
 Lambda's native JSON format creates an outer runtime envelope; the application
 record is serialized inside its `message` field and the smoke helper unwraps it.
 Every application entry carries `service`, `environment`, and
-`log_schema_version=2` fields for consistent queries and future enrichment. The log group has a
-`CentralLoggingOptIn=true` tag as a declarative integration point for a
-platform-owned forwarding service. This stack does not create that forwarding
-pipeline.
+`log_schema_version=2` fields for consistent queries and future enrichment. The
+log group has a `CentralLoggingOptIn=true` tag as a declarative integration
+point for a platform-owned forwarding service. This stack does not create that
+forwarding pipeline.
 
 ## Security boundaries
 
