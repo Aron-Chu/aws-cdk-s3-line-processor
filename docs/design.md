@@ -51,10 +51,10 @@ uploads.
 Lambda's native JSON format creates an outer runtime envelope; the application
 record is serialized inside its `message` field and the smoke helper unwraps it.
 Every application entry carries `service`, `environment`, and
-`log_schema_version=2` fields for consistent queries and future enrichment. The log group has a
-`CentralLoggingOptIn=true` tag as a declarative integration point for a
-platform-owned forwarding service. This stack does not create that forwarding
-pipeline.
+`log_schema_version=2` fields for consistent queries and future enrichment. The
+log group has a `CentralLoggingOptIn=true` tag as a declarative integration
+point for a platform-owned forwarding service. This stack does not create that
+forwarding pipeline.
 
 ## Security boundaries
 

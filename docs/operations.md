@@ -28,17 +28,19 @@ TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
 
 ## Deploy this repository: GitHub Actions
 
-A merge to protected `main` starts Deploy when infrastructure, runtime,
-dependency, or deploy-workflow paths change; documentation-only merges do not.
-Manual **Run workflow** also works.
+Pull requests run credential-free CI. A merge to protected `main` starts Deploy
+when infrastructure, runtime, dependency, or deploy-workflow paths change; its
+validate job checks the exact merged commit before any AWS access.
+Documentation-only merges do not start Deploy. Manual **Run workflow** also
+works.
 
 ```text
 validate (no AWS)
-  -> Approve plan
+  -> Approve AWS plan preparation (no stack execution)
   -> prepare one CloudFormation change set
   -> review DescribeChangeSet artifact
      -> empty: stop
-     -> changes: Approve execute
+     -> changes: Approve exact plan execution
   -> verify artifact against AWS
   -> execute that exact ChangeSetId and wait
   -> operator runs make smoke separately
@@ -61,9 +63,9 @@ installation, synthesis, or CDK command. After the second approval it:
    normalized, account-redacted review fields with the approved artifact; and
 5. executes that ID with the AWS CLI and waits for CloudFormation.
 
-This means Approve #2 authorizes an already-created plan. `--require-approval
-never` only disables the CDK terminal prompt; it does not bypass either GitHub
-environment approval.
+This means the second approval authorizes an already-created plan.
+`--require-approval never` only disables the CDK terminal prompt; it does not
+bypass either GitHub environment approval.
 
 Required `production` environment configuration:
 

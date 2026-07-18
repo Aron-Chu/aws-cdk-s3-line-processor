@@ -2,10 +2,10 @@
 
 ## Deployed smoke (July 17, 2026)
 
-Protected two-stage Deploy of commit `fb2506e`
-([run 29614368981](https://github.com/Aron-Chu/aws-cdk-s3-line-processor/actions/runs/29614368981)):
-validate → approve plan → prepare change set → approve execute →
-`execute-change-set`, then:
+One protected Deploy workflow for commit `ac27e07`
+([run 29622217666](https://github.com/Aron-Chu/aws-cdk-s3-line-processor/actions/runs/29622217666)):
+validate → approve plan preparation → prepare change set → approve exact
+plan execution → `execute-change-set`, then:
 
 ```bash
 make smoke PROFILE=s3-line-processor-operator
@@ -27,13 +27,19 @@ make smoke PROFILE=s3-line-processor-operator
 | Standard log context (`service`, `environment`, `log_schema_version=2`) | Passed |
 | Smoke objects cleaned up | Passed |
 
-Nine outcome logs matched the matrix. Region: `us-west-2`. This is live proof of
-schema-v2 `object_ref` logging and the prepare/execute Deploy path.
+Nine outcome logs matched the matrix. The smoke also confirmed that S3 ETags
+were absent from logs. Region: `us-west-2`. This is live proof of schema-v2
+`object_ref` logging and the exact prepare/execute Deploy path.
+
+Manual Deploy of the same unchanged commit
+([run 29622647315](https://github.com/Aron-Chu/aws-cdk-s3-line-processor/actions/runs/29622647315))
+prepared an empty CloudFormation plan and skipped the execute job. This proves
+the no-change path does not request a second approval or mutate the stack.
 
 ## Historical smoke (July 16, 2026)
 
 Protected deploy of commit `482e89e` (schema-v1 logging). Kept for history only;
-do not cite it as proof of schema-v2 or two-stage Deploy.
+do not cite it as proof of schema-v2 or the current Deploy workflow.
 
 ## Current checkout validation (July 17, 2026)
 
@@ -41,12 +47,10 @@ do not cite it as proof of schema-v2 or two-stage Deploy.
 TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
 ```
 
-Result: lock verification, all pre-commit hooks, 67 tests, 95.74% coverage, and
-CDK synthesis passed. All 100 CDK feature flags are pinned to their reviewed
-recommended values; a synth comparison confirmed the flags do not change any
-application resource. The ETag-removal and exact change-set workflow changes in
-the current branch are not live evidence until that exact SHA completes Deploy
-and smoke.
+Result for the current branch: lock verification, all pre-commit hooks, 69
+tests, 95.74% coverage, and CDK synthesis passed. All 100 CDK feature flags are
+pinned to their reviewed recommended values; a synth comparison confirmed the
+flags do not change any application resource.
 
 ## Fresh local setup (July 16, 2026)
 
