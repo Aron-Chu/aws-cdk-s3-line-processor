@@ -44,7 +44,6 @@ env:
       Capabilities,
       Tags,
       Changes,
-      ChangeSetType,
       IncludeNestedStacks,
       ParentChangeSetId,
       RootChangeSetId,
@@ -248,7 +247,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload immutable plan evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: production-change-set-${{ github.sha }}-${{ github.run_id }}
           path: plan-evidence/
@@ -265,7 +264,7 @@ jobs:
     environment: production
     steps:
       - name: Download approved plan evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: production-change-set-${{ github.sha }}-${{ github.run_id }}
           path: plan-evidence
@@ -307,14 +306,6 @@ jobs:
             --change-set-name "$CHANGE_SET_NAME" \
             --output json > /tmp/live-change-set.json
           live_id="$(jq -r '.ChangeSetId' /tmp/live-change-set.json)"
-          change_set_type="$(jq -r '.ChangeSetType' /tmp/live-change-set.json)"
-          case "$change_set_type" in
-            CREATE|UPDATE) ;;
-            *)
-              echo "Unsupported change-set type: $change_set_type" >&2
-              exit 1
-              ;;
-          esac
           approved_id="${APPROVED_CHANGE_SET_ID/<ACCOUNT_ID>/$EXPECTED_ACCOUNT_ID}"
           test "$live_id" = "$approved_id"
           jq -S "$CHANGE_SET_PROJECTION" /tmp/live-change-set.json | \
@@ -323,6 +314,22 @@ jobs:
           jq -S -c . plan-evidence/change-set.json > /tmp/approved-change-set.json
           jq -S -c . /tmp/reviewed-live-change-set.json > /tmp/live-change-set.jsonl
           cmp --silent /tmp/approved-change-set.json /tmp/live-change-set.jsonl
+          pre_execution_status="$(aws cloudformation describe-stacks \
+            --stack-name S3LineProcessorStack \
+            --query 'Stacks[0].StackStatus' \
+            --output text)"
+          case "$pre_execution_status" in
+            REVIEW_IN_PROGRESS)
+              deployment_operation="CREATE"
+              ;;
+            CREATE_COMPLETE|UPDATE_COMPLETE|UPDATE_ROLLBACK_COMPLETE|IMPORT_COMPLETE|IMPORT_ROLLBACK_COMPLETE)
+              deployment_operation="UPDATE"
+              ;;
+            *)
+              echo "Stack is not ready for change-set execution: $pre_execution_status" >&2
+              exit 1
+              ;;
+          esac
           aws cloudformation execute-change-set \
             --stack-name S3LineProcessorStack \
             --change-set-name "$live_id" \
@@ -352,7 +359,7 @@ jobs:
             echo "Change-set execution did not start within 120 seconds." >&2
             exit 1
           fi
-          if [ "$change_set_type" = "CREATE" ]; then
+          if [ "$deployment_operation" = "CREATE" ]; then
             aws cloudformation wait stack-create-complete \
               --stack-name S3LineProcessorStack
             expected_status="CREATE_COMPLETE"

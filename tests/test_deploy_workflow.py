@@ -23,9 +23,13 @@ def test_execute_job_only_verifies_and_executes_frozen_plan() -> None:
     assert '--client-request-token "execute-${GITHUB_RUN_ID}"' in EXECUTE_JOB
     assert "GITHUB_RUN_ATTEMPT" not in EXECUTE_JOB
     assert "EXECUTE_IN_PROGRESS|EXECUTE_COMPLETE" in EXECUTE_JOB
-    assert 'if [ "$change_set_type" = "CREATE" ]' in EXECUTE_JOB
+    assert 'if [ "$deployment_operation" = "CREATE" ]' in EXECUTE_JOB
     assert 'test "$final_status" = "$expected_status"' in EXECUTE_JOB
-    assert "ChangeSetType" in WORKFLOW
+    assert "ChangeSetType" not in WORKFLOW
+    assert "REVIEW_IN_PROGRESS" in EXECUTE_JOB
+    assert EXECUTE_JOB.index("pre_execution_status=") < EXECUTE_JOB.index(
+        "aws cloudformation execute-change-set"
+    )
 
 
 def test_deploy_trigger_covers_the_python_lockfile() -> None:
