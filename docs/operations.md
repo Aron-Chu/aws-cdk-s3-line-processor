@@ -60,8 +60,10 @@ installation, synthesis, or CDK command. After the second approval it:
 2. verifies the commit, redacted change-set ID, status, and nonempty plan;
 3. obtains a new 15-minute OIDC session;
 4. describes the live change set and compares both its immutable ID and its
-   normalized, account-redacted review fields with the approved artifact; and
-5. executes that ID with an idempotent request token, waits until CloudFormation
+   normalized, account-redacted review fields with the approved artifact;
+5. captures the stack status before execution to select the create or update
+   waiter without reading stale post-execution state; and
+6. executes that ID with an idempotent request token, waits until CloudFormation
    acknowledges execution, then waits for the matching create or update to
    finish and verifies the final stack status.
 
