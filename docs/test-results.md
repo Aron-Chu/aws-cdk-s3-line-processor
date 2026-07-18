@@ -47,8 +47,8 @@ do not cite it as proof of schema-v2 or the current Deploy workflow.
 TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
 ```
 
-Result for the current branch: lock verification, all pre-commit hooks, 73
-tests, 96.84% coverage, and CDK synthesis passed. All 100 CDK feature flags are
+Result for the current branch: lock verification, all pre-commit hooks, 75
+tests, 96.89% coverage, and CDK synthesis passed. All 100 CDK feature flags are
 pinned to their reviewed recommended values; a synth comparison confirmed the
 flags do not change any application resource.
 

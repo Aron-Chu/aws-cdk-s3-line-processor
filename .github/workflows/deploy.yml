@@ -326,7 +326,7 @@ jobs:
           aws cloudformation execute-change-set \
             --stack-name S3LineProcessorStack \
             --change-set-name "$live_id" \
-            --client-request-token "execute-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            --client-request-token "execute-${GITHUB_RUN_ID}"
           execution_started=false
           for _ in $(seq 1 60); do
             execution_status="$(aws cloudformation describe-change-set \

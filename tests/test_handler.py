@@ -366,6 +366,27 @@ def test_handler_rejects_oversized_version_metadata_without_logging_it(
     assert client.calls == []
 
 
+@pytest.mark.parametrize("metadata_field", ["versionId", "sequencer"])
+def test_handler_rejects_malformed_unicode_metadata_without_retry(
+    metadata_field: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = FakeS3Client([])
+    monkeypatch.setattr(handler, "s3_client", client)
+    record = make_record()
+    record["s3"]["object"][metadata_field] = "\ud800"
+
+    response = handler.lambda_handler(
+        {"Records": [record]}, SimpleNamespace(aws_request_id="request-1")
+    )
+
+    logged_message = caplog.records[-1].message
+    assert response["results"][0]["reason_code"] == "invalid_s3_record"
+    assert "\\ud800" not in logged_message
+    assert client.calls == []
+
+
 def test_handler_propagates_s3_operational_failures(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,

@@ -229,7 +229,11 @@ def _safe_record_context(record: Any) -> dict[str, Any]:
 def _bounded_string(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
-    if len(value.encode("utf-8")) > MAX_LOG_METADATA_BYTES:
+    try:
+        encoded_value = value.encode("utf-8")
+    except UnicodeEncodeError:
+        return None
+    if len(encoded_value) > MAX_LOG_METADATA_BYTES:
         return None
     return value
 
