@@ -70,7 +70,7 @@ def test_mask_script_ignores_missing_stack(tmp_path: Path) -> None:
     fake_aws.write_text(
         "#!/usr/bin/env bash\n"
         'echo "An error occurred (ValidationError) when calling the '
-        'DescribeStacks operation: Stack with id S3LineProcessorStack '
+        "DescribeStacks operation: Stack with id S3LineProcessorStack "
         'does not exist" >&2\n'
         "exit 254\n",
         encoding="utf-8",
