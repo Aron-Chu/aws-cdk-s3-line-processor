@@ -33,6 +33,9 @@ boundaries in order:
 Do not create a control before its owner, role, or recovery owner exists.
 Root and long-lived IAM users are not routine maintenance identities.
 
+This free-tier Sandbox has not provisioned Identity Center yet. Keep the Smoke
+Operator contract below as the target; defer live SSO smoke until it exists.
+
 ## IAM Identity Center
 
 Account owner enables Identity Center, requires MFA, assigns permission sets
