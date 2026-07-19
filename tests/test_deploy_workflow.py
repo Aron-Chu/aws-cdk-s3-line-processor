@@ -35,6 +35,7 @@ def test_execute_job_only_verifies_and_executes_frozen_plan() -> None:
 
 def test_deploy_trigger_covers_the_python_lockfile() -> None:
     assert '- "requirements.lock"' in TRIGGERS
+    assert '- "scripts/mask_stack_outputs.sh"' in TRIGGERS
 
 
 def test_empty_cloudformation_plan_skips_execute() -> None:

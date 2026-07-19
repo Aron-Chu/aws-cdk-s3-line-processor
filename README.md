@@ -31,6 +31,35 @@ make check
 These commands install locked dependencies, run pre-commit, execute the test
 suite with coverage, and synthesize CloudFormation without AWS access.
 
+## Deploy and maintain
+
+**Repository path:** Relevant changes on protected `main` run credential-free
+validate, then a protected plan job that prepares one CloudFormation change set
+over a short-lived OIDC session. An empty plan skips execute. Smoke is a
+separate, explicitly authorized operator step. Full procedures live in
+[Operations](docs/operations.md).
+
+**Reviewer sandbox** (your own AWS account only; never the shared repository
+account):
+
+```bash
+git clone https://github.com/Aron-Chu/aws-cdk-s3-line-processor.git
+cd aws-cdk-s3-line-processor
+
+export PROFILE=<SANDBOX_SSO_PROFILE>
+export REGION=<AWS_REGION>
+export SANDBOX_ACK=reviewer-owned
+
+make setup
+make aws-check
+make bootstrap
+make deploy
+make smoke
+```
+
+CDK bootstrap is an account/region prerequisite outside this application stack.
+See [Platform access](docs/platform-access.md).
+
 ## Table of contents
 
 | Need | Document |

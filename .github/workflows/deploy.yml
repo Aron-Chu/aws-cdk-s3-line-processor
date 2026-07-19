@@ -17,6 +17,7 @@ on:
       - "requirements.lock"
       - "requirements*.txt"
       - "s3_line_processor/**"
+      - "scripts/mask_stack_outputs.sh"
   workflow_dispatch:
 
 permissions:
@@ -176,6 +177,11 @@ jobs:
       - name: Verify AWS identity
         run: aws sts get-caller-identity --query Account --output text >/dev/null
 
+      - name: Mask existing stack output values
+        run: |
+          chmod +x scripts/mask_stack_outputs.sh
+          scripts/mask_stack_outputs.sh S3LineProcessorStack
+
       - name: Prepare CloudFormation change set
         id: prepare
         env:
@@ -249,6 +255,9 @@ jobs:
             cat plan-evidence/change-set.md
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Include mask helper in plan evidence
+        run: cp scripts/mask_stack_outputs.sh plan-evidence/mask_stack_outputs.sh
+
       - name: Upload immutable plan evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -295,6 +304,9 @@ jobs:
           allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
           unset-current-credentials: true
+
+      - name: Mask existing stack output values
+        run: bash plan-evidence/mask_stack_outputs.sh S3LineProcessorStack
 
       - name: Execute approved change set
         env:
