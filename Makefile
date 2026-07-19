@@ -9,6 +9,7 @@ STACK ?= S3LineProcessorStack
 LOCK_ARGS := --quiet --python-version 3.14 --universal --generate-hashes --no-annotate --custom-compile-command "make lock"
 
 EXPECTED_ACCOUNT ?=
+SMOKE_PY = SMOKE_EXPECTED_ACCOUNT="$(EXPECTED_ACCOUNT)" $(PY) scripts/live_smoke_test.py
 
 .PHONY: help setup lock lock-check lint test synth check aws-check sandbox-ack bootstrap diff deploy smoke smoke-check
 
@@ -111,7 +112,7 @@ smoke-check:
 		echo "Read-only preflight only; does not authorize or run make smoke."; \
 		exit 2; \
 	}
-	SMOKE_EXPECTED_ACCOUNT="$(EXPECTED_ACCOUNT)" $(PY) scripts/live_smoke_test.py \
+	@$(SMOKE_PY) \
 		--check-only \
 		--profile "$(PROFILE)" \
 		--region "$(REGION)" \
@@ -125,7 +126,7 @@ smoke:
 		echo "Run make smoke-check first; obtain explicit authorization before this write-capable target."; \
 		exit 2; \
 	}
-	SMOKE_EXPECTED_ACCOUNT="$(EXPECTED_ACCOUNT)" $(PY) scripts/live_smoke_test.py \
+	@$(SMOKE_PY) \
 		--profile "$(PROFILE)" \
 		--region "$(REGION)" \
 		--stack "$(STACK)" \

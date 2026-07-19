@@ -641,3 +641,48 @@ def test_no_delete_without_cleanup_flag() -> None:
         log_group=LOG_GROUP,
     )
     s3.delete_object.assert_not_called()
+
+
+def test_smoke_matrix_detects_sensitive_values_in_logs(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    s3 = MagicMock()
+    logs = MagicMock()
+    captured: dict[str, Any] = {"keys": [], "etag": "leak-etag"}
+
+    def put_object(**kwargs: Any) -> dict[str, str]:
+        key = kwargs["Key"]
+        captured["keys"].append(key)
+        if key.endswith("valid.json"):
+            run_id = key.split("/")[1]
+            captured["field"] = f"DO_NOT_LOG_FIELD_{run_id}"
+            captured["value"] = f"DO_NOT_LOG_{run_id}"
+        return {
+            "VersionId": f"v{len(captured['keys'])}",
+            "ETag": f'"{captured["etag"]}"',
+        }
+
+    def paginate(**_kwargs: Any) -> list[dict[str, Any]]:
+        leak = (
+            f"{BUCKET} {captured['keys'][0]} {captured['field']} "
+            f"{captured['value']} {captured['etag']}"
+        )
+        return [{"events": [{"message": leak}]}]
+
+    s3.put_object.side_effect = put_object
+    logs.get_paginator.return_value.paginate.side_effect = paginate
+
+    code = smoke.run_smoke_matrix(
+        s3=s3,
+        logs=logs,
+        timeout=0,
+        cleanup=False,
+        bucket=BUCKET,
+        log_group=LOG_GROUP,
+    )
+    output = capsys.readouterr().out
+
+    assert code == 1
+    assert "uploaded payload value or field name appeared in logs" in output
+    assert "raw bucket name or object key appeared in logs" in output
+    assert "S3 ETag fingerprint appeared in logs" in output

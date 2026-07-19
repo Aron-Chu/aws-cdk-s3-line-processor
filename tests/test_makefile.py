@@ -51,3 +51,15 @@ def test_smoke_check_target_is_read_only_preflight() -> None:
     help_block = MAKEFILE.split("help:", maxsplit=1)[1].split("\nsetup:", maxsplit=1)[0]
     assert "Read-only Identity Center smoke preflight" in help_block
     assert "does not authorize or run make smoke" in MAKEFILE
+
+
+def test_smoke_recipes_do_not_echo_expected_account() -> None:
+    smoke_check = MAKEFILE.split("smoke-check:", maxsplit=1)[1].split(
+        "\nsmoke:", maxsplit=1
+    )[0]
+    smoke = MAKEFILE.split("\nsmoke:", maxsplit=1)[1]
+    assert "SMOKE_PY" in MAKEFILE
+    assert "@$(SMOKE_PY)" in smoke_check
+    assert "@$(SMOKE_PY)" in smoke
+    assert "\n\tSMOKE_EXPECTED_ACCOUNT=" not in smoke_check
+    assert "\n\tSMOKE_EXPECTED_ACCOUNT=" not in smoke
