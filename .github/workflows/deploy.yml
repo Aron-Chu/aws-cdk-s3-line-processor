@@ -176,6 +176,20 @@ jobs:
       - name: Verify AWS identity
         run: aws sts get-caller-identity --query Account --output text >/dev/null
 
+      - name: Mask existing stack output values
+        run: |
+          if ! aws cloudformation describe-stacks \
+            --stack-name S3LineProcessorStack \
+            --output json > /tmp/stack-for-mask.json 2>/dev/null; then
+            exit 0
+          fi
+          jq -r '.Stacks[0].Outputs[]? | .OutputValue // empty' /tmp/stack-for-mask.json \
+            | while IFS= read -r value; do
+              [ -n "$value" ] || continue
+              echo "::add-mask::$value"
+            done
+          rm -f /tmp/stack-for-mask.json
+
       - name: Prepare CloudFormation change set
         id: prepare
         env:
@@ -295,6 +309,20 @@ jobs:
           allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
           unset-current-credentials: true
+
+      - name: Mask existing stack output values
+        run: |
+          if ! aws cloudformation describe-stacks \
+            --stack-name S3LineProcessorStack \
+            --output json > /tmp/stack-for-mask.json 2>/dev/null; then
+            exit 0
+          fi
+          jq -r '.Stacks[0].Outputs[]? | .OutputValue // empty' /tmp/stack-for-mask.json \
+            | while IFS= read -r value; do
+              [ -n "$value" ] || continue
+              echo "::add-mask::$value"
+            done
+          rm -f /tmp/stack-for-mask.json
 
       - name: Execute approved change set
         env:

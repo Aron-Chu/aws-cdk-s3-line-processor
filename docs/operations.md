@@ -100,6 +100,11 @@ build a replacement plan. Every newly run plan job uses its run attempt in the
 change-set and artifact names. If GitHub reruns only a failed execute job, it
 reuses the successful plan job's emitted artifact rather than creating a plan.
 
+**Implemented:** After OIDC assumes the deploy role, plan and execute mask any
+existing CloudFormation stack output values in Actions logs before CDK or
+change-set mutation steps. Physical names are not credentials; masking reduces
+unnecessary public disclosure.
+
 `--require-approval never` disables only CDK's terminal prompt. It does not
 bypass the protected GitHub environment approvals.
 
