@@ -8,7 +8,9 @@ REGION ?= us-west-2
 STACK ?= S3LineProcessorStack
 LOCK_ARGS := --quiet --python-version 3.14 --universal --generate-hashes --no-annotate --custom-compile-command "make lock"
 
-.PHONY: help setup lock lock-check lint test synth check aws-check sandbox-ack bootstrap diff deploy smoke
+EXPECTED_ACCOUNT ?=
+
+.PHONY: help setup lock lock-check lint test synth check aws-check sandbox-ack bootstrap diff deploy smoke smoke-check
 
 help:
 	@echo "make setup                              Create/reuse .venv, install deps, enable pre-commit"
@@ -19,12 +21,14 @@ help:
 	@echo "make synth                              Run cdk synth"
 	@echo "make check                              lock-check + lint + test + synth"
 	@echo "make aws-check PROFILE=<profile>        Verify the target AWS identity"
-	@echo "make bootstrap PROFILE=<profile>        Bootstrap a reviewer sandbox (ack required)"
+	@echo "make bootstrap PROFILE=<profile>        Bootstrap a developer-owned sandbox (ack required)"
 	@echo "make diff PROFILE=<profile>             Review the live CDK diff"
-	@echo "make deploy PROFILE=<profile>           check + diff + reviewer sandbox deploy (ack required)"
-	@echo "make smoke PROFILE=<sso-profile>        Authorized live AWS smoke"
+	@echo "make deploy PROFILE=<profile>           check + diff + developer-owned sandbox deploy (ack required)"
+	@echo "make smoke-check PROFILE=<sso-profile>  Read-only Identity Center smoke preflight"
+	@echo "make smoke PROFILE=<sso-profile>        Authorized live AWS smoke (write-capable)"
 	@echo ""
 	@echo "Local bootstrap/deploy require: SANDBOX_ACK=reviewer-owned"
+	@echo "Optional smoke account pin: EXPECTED_ACCOUNT=<account-id>"
 
 setup:
 	@if [ ! -x "$(PY)" ]; then \
@@ -100,14 +104,28 @@ deploy: sandbox-ack check diff
 	PATH="$(VENV_BIN):$$PATH" AWS_REGION="$(REGION)" AWS_DEFAULT_REGION="$(REGION)" \
 		npx cdk deploy --profile "$(PROFILE)"
 
+smoke-check:
+	@test -x "$(PY)" || { echo "Missing $(PY). Run: make setup"; exit 1; }
+	@test -n "$(PROFILE)" || { \
+		echo "Usage: make smoke-check PROFILE=<SMOKE_SSO_PROFILE> [REGION=$(REGION)] [STACK=$(STACK)] [EXPECTED_ACCOUNT=<account-id>]"; \
+		echo "Read-only preflight only; does not authorize or run make smoke."; \
+		exit 2; \
+	}
+	SMOKE_EXPECTED_ACCOUNT="$(EXPECTED_ACCOUNT)" $(PY) scripts/live_smoke_test.py \
+		--check-only \
+		--profile "$(PROFILE)" \
+		--region "$(REGION)" \
+		--stack "$(STACK)"
+
 smoke:
 	@test -x "$(PY)" || { echo "Missing $(PY). Run: make setup"; exit 1; }
 	@test -n "$(PROFILE)" || { \
 		echo "Usage: make smoke PROFILE=<SMOKE_SSO_PROFILE>"; \
-		echo "PROFILE must be an approved local AWS CLI profile, not a docs placeholder."; \
+		echo "PROFILE must be an approved Identity Center SSO profile, not a docs placeholder."; \
+		echo "Run make smoke-check first; obtain explicit authorization before this write-capable target."; \
 		exit 2; \
 	}
-	$(PY) scripts/live_smoke_test.py \
+	SMOKE_EXPECTED_ACCOUNT="$(EXPECTED_ACCOUNT)" $(PY) scripts/live_smoke_test.py \
 		--profile "$(PROFILE)" \
 		--region "$(REGION)" \
 		--stack "$(STACK)" \
