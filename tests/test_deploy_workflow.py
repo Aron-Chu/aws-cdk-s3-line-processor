@@ -1,8 +1,9 @@
 from pathlib import Path
 
 WORKFLOW = Path(".github/workflows/deploy.yml").read_text(encoding="utf-8")
-TRIGGERS = WORKFLOW.split("\npermissions:\n", maxsplit=1)[0]
-PLAN_JOB, EXECUTE_JOB = WORKFLOW.split("\n  deploy:\n", maxsplit=1)
+BEFORE_PLAN, AFTER_PLAN = WORKFLOW.split("\n  plan:\n", maxsplit=1)
+PLAN_JOB, EXECUTE_JOB = AFTER_PLAN.split("\n  deploy:\n", maxsplit=1)
+TRIGGERS = BEFORE_PLAN.split("\npermissions:\n", maxsplit=1)[0]
 
 
 def test_execute_job_only_verifies_and_executes_frozen_plan() -> None:
@@ -43,14 +44,28 @@ def test_empty_cloudformation_plan_skips_execute() -> None:
     assert "if: needs.plan.outputs.has_changes == 'true'" in EXECUTE_JOB
 
 
+def test_plan_evidence_is_unique_and_stable_across_reruns() -> None:
+    assert "github.run_attempt" in PLAN_JOB
+    assert "artifact_name: ${{ steps.prepare.outputs.artifact_name }}" in PLAN_JOB
+    assert "name: ${{ steps.prepare.outputs.artifact_name }}" in PLAN_JOB
+    assert "name: ${{ needs.plan.outputs.artifact_name }}" in EXECUTE_JOB
+    assert "github.run_attempt" not in EXECUTE_JOB
+
+
 def test_deploy_uses_cloudformation_evidence_and_hardened_oidc() -> None:
     assert "cdk diff" not in WORKFLOW
     assert "aws cloudformation describe-change-set" in PLAN_JOB
     assert "plan-evidence/change-set.json" in WORKFLOW
     assert "CHANGE_SET_PROJECTION" in WORKFLOW
     assert "cmp --silent" in EXECUTE_JOB
-    assert WORKFLOW.count("role-to-assume: ${{ secrets.AWS_ROLE_ARN }}") == 2
-    assert WORKFLOW.count("allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}") == 2
-    assert WORKFLOW.count("role-duration-seconds: 900") == 2
-    assert WORKFLOW.count("unset-current-credentials: true") == 2
+    for job in (PLAN_JOB, EXECUTE_JOB):
+        assert job.count("environment: production") == 1
+        assert job.count("role-to-assume: ${{ secrets.AWS_ROLE_ARN }}") == 1
+        assert job.count("allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}") == 1
+        assert job.count("role-duration-seconds: 900") == 1
+        assert job.count("unset-current-credentials: true") == 1
+
+    assert PLAN_JOB.index("npx cdk synth --quiet") < PLAN_JOB.index(
+        "aws-actions/configure-aws-credentials"
+    )
     assert "vars.AWS_ROLE_ARN" not in WORKFLOW
