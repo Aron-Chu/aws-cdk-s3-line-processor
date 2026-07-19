@@ -17,31 +17,25 @@ Before citing a result, compare its commit with current `main` and distinguish:
 | Live read-only | Observed from AWS without changing resources |
 | Operator action | A write-capable deploy, smoke, rollback, or cleanup performed by an authorized human |
 
-## Documentation candidate (July 19, 2026)
+## Merged documentation and GitOps update (July 19, 2026)
 
-Candidate: uncommitted documentation/test changes based on commit `4b36758`.
+Commit `7c6e4af` landed on protected `main` through
+[PR #31](https://github.com/Aron-Chu/aws-cdk-s3-line-processor/pull/31)
+(`chore: make repository reviewer-ready`).
 
-```bash
-TMPDIR=/tmp TMP=/tmp TEMP=/tmp \
-  .venv/bin/pytest tests/test_docs.py -vv --no-cov
+Local validation for that merge recorded:
 
-TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
-git diff --check
-```
+- 86 tests with 96.89% application coverage;
+- pre-commit hooks, including private-key and hardcoded-secret checks;
+- CDK synthesis; and
+- `git diff --check` clean.
 
-Result:
+Protected Deploy
+[run 29700704742](https://github.com/Aron-Chu/aws-cdk-s3-line-processor/actions/runs/29700704742)
+completed `validate` and `plan` for `7c6e4af`, prepared an empty change set, and
+skipped execute. No application CloudFormation resources changed.
 
-- 8 focused documentation tests passed.
-- All pre-commit hooks passed, including private-key and hardcoded-secret checks.
-- All 86 tests passed with 96.89% application coverage.
-- CDK synthesis passed.
-- No AWS or GitHub resource was changed by validation.
-
-Because this candidate is not committed, these results must be replaced or
-supplemented with the final commit and CI run before being treated as merged
-evidence.
-
-## Latest deployed commit (July 18, 2026)
+## Latest resource-changing deploy (July 18, 2026)
 
 Commit `4b36758` was deployed through the protected workflow in
 [run 29626162618](https://github.com/Aron-Chu/aws-cdk-s3-line-processor/actions/runs/29626162618).
@@ -71,7 +65,8 @@ Read-only CloudFormation and CloudWatch queries observed:
 This observation did not upload or delete objects and is not a replacement for
 a newly authorized `make smoke` run. The stack reported termination protection
 disabled and drift status `NOT_CHECKED`; those current operating tradeoffs are
-documented in [the design](design.md) and [operations](operations.md).
+documented in [the design](design.md) and [operations](operations.md). The later
+`7c6e4af` empty-plan Deploy did not change that live posture.
 
 ## Reproduce local evidence
 
