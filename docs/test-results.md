@@ -17,6 +17,15 @@ Before citing a result, compare its commit with current `main` and distinguish:
 | Live read-only | Observed from AWS without changing resources |
 | Operator action | A write-capable deploy, smoke, rollback, or cleanup performed by an authorized human |
 
+## Candidate: scoped smoke preflight (July 19, 2026)
+
+Working-tree candidate on branch `codex/smoke-preflight` adds read-only
+`make smoke-check` with local mocked coverage. No live smoke was executed for
+this change. The Identity Center Smoke Operator permission set remains a
+platform prerequisite. The current shared long-lived credential does not match
+the documented temporary Identity Center target. Do not treat smoke as fixed
+until a human-authorized 9/9 Identity Center run is recorded here.
+
 ## Merged documentation and GitOps update (July 19, 2026)
 
 Commit `7c6e4af` landed on protected `main` through

@@ -47,7 +47,29 @@ Use the current
 | --- | --- |
 | Platform administrator | Time-limited Identity Center, OIDC, bootstrap, and access administration |
 | Read-only auditor | Inspect stack, IAM trust, bootstrap, CloudTrail, and integration settings |
-| Smoke operator | Describe this stack, read its logs, upload smoke objects, and delete only smoke-created versions |
+| Smoke operator | Five-action contract below; no deploy or bootstrap |
+
+### Smoke Operator permission contract
+
+**Platform prerequisite:** Provision a short-session Identity Center permission
+set assigned through a group. Resolve the live log-group physical ID privately
+from the application stack when building the set; never copy physical names,
+ARNs, or account IDs into public documentation.
+
+| Action | Resource scope (placeholders) |
+| --- | --- |
+| `cloudformation:DescribeStacks` | Exact application stack |
+| `cloudformation:DescribeStackResources` | Exact application stack |
+| `logs:FilterLogEvents` | Exact application log group |
+| `s3:PutObject` | `<BUCKET_ARN>/incoming/smoke-*/*` |
+| `s3:DeleteObjectVersion` | `<BUCKET_ARN>/incoming/smoke-*/*` |
+
+Include non-`.json` keys under the smoke prefix (the matrix uploads `test.txt`).
+Do not grant deploy, bootstrap, IAM, Lambda, SSM, S3 list/read, broad
+`incoming/*` cleanup, `s3:DeleteObject` without version IDs, or CloudFormation
+mutation. Disable any legacy long-lived IAM-user smoke credentials only after
+an authorized Identity Center `make smoke` run succeeds and ownership is
+confirmed.
 
 ### Configure and verify a profile
 

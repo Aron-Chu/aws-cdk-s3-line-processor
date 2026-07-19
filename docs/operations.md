@@ -146,32 +146,52 @@ for the risk and the future split-role design.
 
 ## Post-deploy smoke test
 
-`make smoke` is write-capable: it uploads test objects and deletes the exact
-versions it creates. Run it only with explicit authorization and an approved
-Identity Center smoke profile.
+Shared-account smoke uses a scoped Identity Center profile. Local bootstrap or
+`cdk deploy` against the shared repository account is prohibited; deployment
+stays on the protected GitHub Deploy workflow.
+
+```text
+aws sso login
+  -> make smoke-check
+  -> human confirms authorization
+  -> make smoke
+```
 
 ```bash
 aws sso login --profile <SMOKE_SSO_PROFILE>
-aws sts get-caller-identity --profile <SMOKE_SSO_PROFILE>
 
+make smoke-check \
+  PROFILE=<SMOKE_SSO_PROFILE> \
+  REGION=<AWS_REGION> \
+  STACK=S3LineProcessorStack
+
+# After explicit human authorization:
 make smoke \
   PROFILE=<SMOKE_SSO_PROFILE> \
   REGION=<AWS_REGION> \
   STACK=S3LineProcessorStack
 ```
 
-The profile needs scoped access to `cloudformation:DescribeStacks`,
-`cloudformation:DescribeStackResources`, `logs:FilterLogEvents`,
-`s3:PutObject`, and `s3:DeleteObjectVersion` for this stack and the smoke prefix.
-It does not need deployment or IAM administration.
+`make smoke-check` is read-only. It confirms a temporary assumed-role Identity
+Center session, stack discovery, and log-read access. It does **not** prove
+`s3:PutObject` or `s3:DeleteObjectVersion`.
+
+`make smoke` is write-capable: it runs the same preflight, uploads randomized
+objects under `incoming/smoke-*/*` (including a `.txt` notification-filter
+case), and deletes only the exact versions it created. Run it only with
+explicit authorization.
+
+The complete five-action Smoke Operator contract lives in
+[platform access](platform-access.md#smoke-operator-permission-contract).
 
 **Expected result:** Nine application outcomes cover valid, malformed,
 oversized, ignored-suffix, and rapid-overwrite cases; sensitive values are
 absent from logs; all created versions are removed.
 
 **Common failure:** A timeout can mean notification delay, wrong stack/region,
-missing log permission, or an expired SSO session. Inspect identity and stack
-status before retrying; do not grant broad access immediately.
+missing log permission, or an expired SSO session. `make smoke-check` failing
+closed usually means the platform permission set is missing or the session is
+wrong—do not grant broad access to unblock it.
 
 **Stop condition:** If cleanup fails, preserve the run output and remove only
 the reported version IDs. Do not empty the bucket or run a broad delete.
@@ -243,41 +263,6 @@ a later fix still follows the normal PR and change-set workflow.
 
 **Stop condition:** Never delete the retained bucket, bypass GitHub controls, or
 make an unrecorded console edit to force the application stack green.
-
-## External reviewer sandbox
-
-This is a separate path for a fork or clone in the reviewer's own AWS sandbox.
-It never replaces repository deployment.
-
-```bash
-git clone https://github.com/Aron-Chu/aws-cdk-s3-line-processor.git
-cd aws-cdk-s3-line-processor
-
-export PROFILE=<SANDBOX_SSO_PROFILE>
-export REGION=<AWS_REGION>
-export SANDBOX_ACK=reviewer-owned
-
-make setup
-make aws-check
-make bootstrap
-make deploy
-make smoke
-```
-
-`make deploy` runs local checks and `cdk diff`, then uses the normal interactive
-CDK approval. The acknowledgement prevents either local write command from
-being mistaken for the repository deployment path. `make bootstrap` writes
-account-level resources and can use broad CDK defaults; run it only in the
-reviewer's disposable sandbox after confirming the identity.
-
-**Expected result:** The reviewer owns all created resources and can reproduce
-the live path independently.
-
-**Common failure:** `aws-check` showing an unintended account means the profile
-or cached session is wrong. Stop instead of overriding the account in a command.
-
-**Stop condition:** Never point this path at the repository's shared account or
-use it to bypass protected-main deployment.
 
 ## Dependency maintenance
 
@@ -400,3 +385,39 @@ deletion succeeds only when no object version or delete marker remains.
 **Stop condition:** Do not use a recursive delete, wildcard, `git clean`, or a
 bulk script against retained data without a separately reviewed inventory and
 recovery decision.
+
+## Optional developer-owned AWS sandbox
+
+This appendix is only for a developer's disposable AWS account. It never targets
+the shared repository account and never replaces protected-main deployment.
+
+```bash
+git clone https://github.com/Aron-Chu/aws-cdk-s3-line-processor.git
+cd aws-cdk-s3-line-processor
+
+export PROFILE=<SANDBOX_SSO_PROFILE>
+export REGION=<AWS_REGION>
+export SANDBOX_ACK=reviewer-owned
+
+make setup
+make aws-check
+make bootstrap
+make deploy
+make smoke-check
+make smoke
+```
+
+`make deploy` runs local checks and `cdk diff`, then uses the normal interactive
+CDK approval. The acknowledgement prevents either local write command from
+being mistaken for the repository deployment path. `make bootstrap` writes
+account-level resources and can use broad CDK defaults; run it only after
+confirming the identity is the developer's own disposable account.
+
+**Expected result:** The developer owns all created resources and can reproduce
+the live path independently.
+
+**Common failure:** `aws-check` showing an unintended account means the profile
+or cached session is wrong. Stop instead of overriding the account in a command.
+
+**Stop condition:** Never point this path at the repository's shared account or
+use it to bypass protected-main deployment.
