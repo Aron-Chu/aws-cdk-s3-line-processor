@@ -104,8 +104,10 @@ artifact for the wrong commit or with unexplained IAM/replacement/deletion.
 
 ## Post-deploy smoke test
 
-Shared-account smoke uses a scoped Identity Center profile. Local bootstrap or
-`cdk deploy` against the shared repository account is prohibited.
+Shared-account smoke uses a scoped Identity Center profile. This free-tier
+Sandbox has not provisioned Identity Center, so skip live smoke until it does.
+Local bootstrap or `cdk deploy` against the shared repository account is
+prohibited.
 
 ```bash
 aws sso login --profile <SMOKE_SSO_PROFILE>

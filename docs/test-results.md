@@ -17,14 +17,13 @@ Before citing a result, compare its commit with current `main` and distinguish:
 | Live read-only | Observed from AWS without changing resources |
 | Operator action | A write-capable deploy, smoke, rollback, or cleanup performed by an authorized human |
 
-## Candidate: scoped smoke preflight (July 19, 2026)
+## Current smoke posture (July 19, 2026)
 
-Working-tree candidate on branch `codex/smoke-preflight` adds read-only
-`make smoke-check` with local mocked coverage. No live smoke was executed for
-this change. The Identity Center Smoke Operator permission set remains a
-platform prerequisite. The current shared long-lived credential does not match
-the documented temporary Identity Center target. Do not treat smoke as fixed
-until a human-authorized 9/9 Identity Center run is recorded here.
+`make smoke-check` / `make smoke` are on `main` and require an Identity Center
+assumed-role profile. This free-tier Sandbox did not provision Identity Center,
+so no live 9/9 smoke is recorded. Do not treat smoke as fixed until that run
+exists. Local proof remains `make check`; IAM-user profiles are rejected by
+design.
 
 ## Merged documentation and GitOps update (July 19, 2026)
 
