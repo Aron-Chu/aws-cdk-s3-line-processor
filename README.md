@@ -1,45 +1,55 @@
 # Secure S3 Line Processor
 
-AWS CDK example: a private S3 bucket with a TLS-only bucket policy invokes a
-Python 3.14 Lambda when objects land under `incoming/*.json`. The Lambda
-validates one-line JSON and writes safe processing metadata to CloudWatch Logs.
+Small AWS CDK example: one private S3 bucket invokes one Python 3.14 Lambda for
+objects under `incoming/` whose keys end in `.json`. The Lambda validates
+one-line JSON and writes safe processing metadata to CloudWatch Logs.
 
 ![Architecture](docs/architecture.svg)
 
 Editable source: [docs/architecture.excalidraw](docs/architecture.excalidraw).
 
-## Quickstart
+## Runtime in 60 seconds
+
+1. An authorized uploader writes a JSON file to `incoming/` over TLS.
+2. S3 invokes the Lambda for matching `.json` object-created events.
+3. The Lambda reads at most 1 MiB, validates one JSON object on one line, and
+   records structured metadata.
+4. Invalid input is rejected permanently. AWS or service failures raise so the
+   platform can retry.
+
+The bucket is private, encrypted, owner-enforced, versioned, and retained. The
+Lambda reads only `incoming/*` and cannot write to S3. Logs contain no payload,
+JSON field names or values, raw bucket/key, or S3 ETag.
+
+## Validate locally
 
 ```bash
 make setup
 make check
 ```
 
-Deploy, smoke-test, and clean up: [docs/operations.md](docs/operations.md).
+These commands install locked dependencies, run pre-commit, execute the test
+suite with coverage, and synthesize CloudFormation without AWS access.
 
-## Key decisions
+## Where do I go?
 
-- Lambda reads only `incoming/*`; S3 invoke permission is constrained by source
-  account and bucket ARN.
-- S3→Lambda delivery is at-least-once; this stack does not deduplicate.
-- Malformed input is rejected permanently; AWS/service failures retry. Logs use a
-  pseudonymous object reference and contain no raw bucket/key, payload contents,
-  parsed values, or JSON field names.
-
-## Review path
-
-1. Architecture and behavior — this README and [docs/design.md](docs/design.md)
-2. CDK stack — `s3_line_processor/stack.py`
-3. Lambda handler — `lambda_src/handler.py`
-4. Pull-request CI and main Deploy workflow — `.github/workflows/`
-5. Evidence — [docs/test-results.md](docs/test-results.md)
-
-## Documentation
-
-| Topic | Document |
+| Need | Document |
 | --- | --- |
-| Full reviewer tour and interview questions | [docs/review-guide.md](docs/review-guide.md) |
-| Deployment and maintenance | [docs/operations.md](docs/operations.md) |
-| Design, security, and failure behavior | [docs/design.md](docs/design.md) |
-| What was intentionally not added | [docs/intentional-omissions.md](docs/intentional-omissions.md) |
-| Live verification results | [docs/test-results.md](docs/test-results.md) |
+| Understand architecture, security, networking, and tradeoffs | [Design](docs/design.md) |
+| Contribute or review an agent-assisted change | [Contributing](CONTRIBUTING.md) |
+| Deploy, smoke-test, diagnose, or clean up | [Operations](docs/operations.md) |
+| Prepare AWS identities, CDK bootstrap, OIDC, and GitHub controls | [Platform access](docs/platform-access.md) |
+| Review recorded local and live evidence | [Test results](docs/test-results.md) |
+| Report a vulnerability privately | [Security](SECURITY.md) |
+| Guide a coding agent working in this repository | [Agent guide](AGENTS.md) |
+
+Documentation uses three labels: **Implemented** for verified current behavior,
+**Platform prerequisite** for controls owned outside this stack, and **Future
+hardening** for designs that are not yet implemented.
+
+## Review order
+
+1. Read [the design](docs/design.md).
+2. Inspect `s3_line_processor/stack.py` and `lambda_src/handler.py`.
+3. Review `tests/` and `.github/workflows/`.
+4. Check the dated evidence in [test results](docs/test-results.md).

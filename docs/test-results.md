@@ -1,74 +1,85 @@
-# Live test results
+# Verification evidence
 
-## Deployed smoke (July 17, 2026)
+## Purpose
 
-One protected Deploy workflow for commit `ac27e07`
-([run 29622217666](https://github.com/Aron-Chu/aws-cdk-s3-line-processor/actions/runs/29622217666)):
-validate → approve plan preparation → prepare change set → approve exact
-plan execution → `execute-change-set`, then:
+Record dated evidence tied to an exact deployed commit or an explicitly named
+working-tree candidate.
 
-```bash
-make smoke PROFILE=s3-line-processor-operator
-```
+## Evidence rule
 
-| Check | Result |
+This file is a historical record, not an automatically current status page.
+Before citing a result, compare its commit with current `main` and distinguish:
+
+| Evidence | Meaning |
 | --- | --- |
-| Valid JSON → `processed` | Passed |
-| Invalid JSON → `invalid_json` | Passed |
-| Multiline → `multiline_input` | Passed |
-| Empty → `empty_input` | Passed |
-| JSON array → `non_object_json` | Passed |
-| Invalid UTF-8 → `invalid_utf8` | Passed |
-| Over 1 MiB → `object_too_large` | Passed |
-| `incoming/*.txt` → no invocation | Passed |
-| Rapid overwrite → each version handled | Passed |
-| Payload field names/values absent from logs | Passed |
-| Raw bucket name / object key absent from logs | Passed |
-| Standard log context (`service`, `environment`, `log_schema_version=2`) | Passed |
-| Smoke objects cleaned up | Passed |
+| Local | Executed against a checkout; no AWS proof |
+| Workflow | Recorded by GitHub Actions for an exact commit |
+| Live read-only | Observed from AWS without changing resources |
+| Operator action | A write-capable deploy, smoke, rollback, or cleanup performed by an authorized human |
 
-Nine outcome logs matched the matrix. The smoke also confirmed that S3 ETags
-were absent from logs. Region: `us-west-2`. This is live proof of schema-v2
-`object_ref` logging and the exact prepare/execute Deploy path.
+## Documentation candidate (July 19, 2026)
 
-Manual Deploy of the same unchanged commit
-([run 29622647315](https://github.com/Aron-Chu/aws-cdk-s3-line-processor/actions/runs/29622647315))
-prepared an empty CloudFormation plan and skipped the execute job. This proves
-the no-change path does not request a second approval or mutate the stack.
-
-## Historical smoke (July 16, 2026)
-
-Protected deploy of commit `482e89e` (schema-v1 logging). Kept for history only;
-do not cite it as proof of schema-v2 or the current Deploy workflow.
-
-## Current checkout validation (July 17, 2026)
+Candidate: uncommitted documentation/test changes based on commit `4b36758`.
 
 ```bash
+TMPDIR=/tmp TMP=/tmp TEMP=/tmp \
+  .venv/bin/pytest tests/test_docs.py -vv --no-cov
+
 TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
+git diff --check
 ```
 
-Result for the current branch: lock verification, all pre-commit hooks, 75
-tests, 96.89% coverage, and CDK synthesis passed. All 100 CDK feature flags are
-pinned to their reviewed recommended values; a synth comparison confirmed the
-flags do not change any application resource.
+Result:
 
-## Fresh local setup (July 16, 2026)
+- 8 focused documentation tests passed.
+- All pre-commit hooks passed, including private-key and hardcoded-secret checks.
+- All 86 tests passed with 96.89% application coverage.
+- CDK synthesis passed.
+- No AWS or GitHub resource was changed by validation.
 
-Clean-room install and full validation with a new absolute venv:
+Because this candidate is not committed, these results must be replaced or
+supplemented with the final commit and CI run before being treated as merged
+evidence.
 
-```bash
-make setup VENV=/tmp/s3lp-fresh-venv
-TMPDIR=/tmp make check VENV=/tmp/s3lp-fresh-venv
+## Latest deployed commit (July 18, 2026)
+
+Commit `4b36758` was deployed through the protected workflow in
+[run 29626162618](https://github.com/Aron-Chu/aws-cdk-s3-line-processor/actions/runs/29626162618).
+The exact sequence completed successfully:
+
+```text
+validate -> approve plan -> prepare change set -> approve execution
+  -> verify immutable evidence -> execute change set -> wait for stack
 ```
 
-Result: seeded uv venv and hash-pinned install succeeded; lock verification,
-pre-commit, 61 tests (96.23% coverage), and CDK synth passed.
+A manual run of the unchanged commit,
+[run 29627750709](https://github.com/Aron-Chu/aws-cdk-s3-line-processor/actions/runs/29627750709),
+prepared an empty change set and skipped execution. This is recorded evidence
+for the no-change path.
 
-## Local unit tests
+## Live read-only observation (July 19, 2026)
+
+Read-only CloudFormation and CloudWatch queries observed:
+
+- stack status `UPDATE_COMPLETE` for `S3LineProcessorStack`;
+- the expected bucket and function output keys;
+- nine schema-v2 application records from the post-deploy smoke window;
+- expected `processed` and rejection reason-code outcomes; and
+- only approved metadata keys, with no raw bucket/key, payload, field name, or
+  ETag fields.
+
+This observation did not upload or delete objects and is not a replacement for
+a newly authorized `make smoke` run. The stack reported termination protection
+disabled and drift status `NOT_CHECKED`; those current operating tradeoffs are
+documented in [the design](design.md) and [operations](operations.md).
+
+## Reproduce local evidence
 
 ```bash
 make setup
-make test
+TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
 ```
 
-Handler, stack assertions, and smoke helpers. No AWS calls.
+Use [operations](operations.md) for authorized live deployment and smoke
+procedures. Record their exact commit, workflow URL, actor-owned evidence, and
+date here without exposing account IDs or live resource names.

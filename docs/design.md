@@ -1,100 +1,177 @@
 # Design
 
+## Purpose
+
+Define the stable runtime, security, networking, failure, and retention contract
+for the S3 line processor.
+
+## Who should use this
+
+Reviewers and contributors evaluating application or infrastructure behavior.
+
+## What this does not do
+
+This document does not grant access or provide deployment commands. Use
+[platform access](platform-access.md) for account prerequisites and
+[operations](operations.md) for routine procedures.
+
+## System in one minute
+
+An authorized uploader writes one JSON object on one line under `incoming/`,
+with a key ending in `.json`. S3 invokes one Lambda. The Lambda reads the exact
+object version when available, validates the input, and writes structured
+metadata to CloudWatch Logs. It never logs the payload, JSON field names or
+values, raw bucket/key, or S3 ETag.
+
+AWS CDK defines the desired resources and synthesizes a CloudFormation template.
+CloudFormation is the control plane that creates and updates the stack; CDK is
+not a second runtime or deployment engine.
+
+```text
+authorized uploader
+  -> private S3: prefix incoming/, suffix .json
+  -> S3 ObjectCreated notification
+  -> Python Lambda validation
+  -> safe CloudWatch Logs metadata
+```
+
 ## Runtime flow
 
-1. A client uploads an object to the private bucket under `incoming/` with a
+1. A temporary-credential uploader writes an object under `incoming/` with a
    `.json` suffix over HTTPS.
-2. S3 emits `s3:ObjectCreated:*` for matching keys and invokes the Lambda
-   directly.
-3. The Lambda reads that object version (when present), validates one-line JSON,
-   and logs structured metadata only.
-4. Malformed input is rejected permanently for that record. AWS or service
-   failures raise and remain retryable.
+2. S3 emits `s3:ObjectCreated:*` for the matching key and invokes the Lambda.
+3. The Lambda reads at most `MAX_FILE_BYTES + 1` bytes and closes the body.
+4. Valid input is logged as `processed`; malformed input is logged as
+   `rejected`; AWS or unexpected service errors are logged safely and raised.
+
+## Deployed resources
+
+| Resource | Purpose | Important controls |
+| --- | --- | --- |
+| S3 input bucket | Store uploaded JSON and emit create notifications | Block Public Access, SSE-S3, versioning, owner-enforced ownership, retained |
+| S3 bucket policy | Enforce transport security | Denies all S3 actions when `aws:SecureTransport` is false; retained |
+| Lambda function | Read and validate each matching object | Python 3.14 ARM64, 256 MiB, 15-second timeout, no VPC |
+| Lambda role | Give runtime permissions | Trusts only Lambda; reads only `incoming/*`; writes only to its log group |
+| CloudWatch log group | Store structured runtime and application records | 14-day retention and `CentralLoggingOptIn=true` tag |
+| Lambda permission | Let S3 invoke the function | Restricted by source account and bucket ARN |
+| S3 notification | Connect object creation to Lambda | Prefix `incoming/`, suffix `.json` |
+| Stack outputs | Let operators discover runtime names | Bucket and function names only |
+
+The stack applies `Project`, `ManagedBy`, and `Environment=Sandbox` tags. The
+GitHub environment named `production` is a deployment-control boundary; it does
+not change the workload's current `Sandbox` tag or log field.
 
 ## Networking model
 
 The stack creates no customer-managed VPC. Uploaders and the non-VPC Lambda use
 AWS regional service endpoints over HTTPS; AWS manages service DNS, routing, and
-transport termination. "Private bucket" means access is controlled by IAM,
-Block Public Access, and bucket policy—it does not mean the S3 regional endpoint
-is reachable only through a private network.
+transport termination. A private bucket is protected by IAM, Block Public
+Access, and bucket policy. It is not a claim that the regional S3 endpoint is
+reachable only through a private network.
 
-S3-to-Lambda notification delivery is an AWS-managed service invocation rather
-than a customer-routed TCP connection. The Lambda resource permission still
-constrains that invocation by source account and bucket ARN. A VPC, NAT gateway,
-security groups, Route 53, and VPC endpoints would add no required protection
-for the current flow. Revisit them only for private-resource access, private-only
-upload paths, or explicit egress controls; ZTNA is not applicable because this
-stack exposes no interactive private application.
+S3-to-Lambda notification delivery is an AWS-managed service invocation, not a
+customer-routed TCP connection. The Lambda resource policy still restricts the
+source account and bucket ARN. A VPC, NAT gateway, security groups, Route 53,
+and VPC endpoints would add no required protection for the current flow. Revisit
+that decision only for private-resource access, a private-only upload path, or
+explicit egress controls.
 
 ## Input contract
 
 | Rule | Requirement |
 | --- | --- |
-| Key | Must start with `incoming/` and end with `.json` |
+| Key | Starts with `incoming/` and ends with `.json` |
 | Size | At most `MAX_FILE_BYTES` (default 1 MiB) |
-| Encoding | UTF-8, optional BOM |
+| Encoding | UTF-8 with an optional BOM |
 | Shape | Exactly one JSON line; trailing `\n` or `\r\n` allowed |
-| JSON | A single object (`{...}`); no arrays, scalars, `NaN`, `Infinity`, or `-Infinity` |
-| Rejected | Empty body, multiple lines, invalid UTF-8, invalid JSON, non-object JSON |
+| JSON | One object; no array, scalar, `NaN`, `Infinity`, or `-Infinity` |
+| Rejected | Empty body, multiple lines, invalid UTF-8/JSON, or non-object JSON |
 
-Successful logs include a SHA-256 `object_ref`, bounded scalar
-version/sequencer metadata, sizes, and `parsed_field_count`. Invalid or oversized
-metadata is omitted rather than serialized. The reference is derived from bucket,
-decoded key, and version ID with length-delimited inputs, so repeated delivery of the
-same object version remains correlatable without logging the raw bucket or key.
-It is pseudonymous correlation metadata, not a claim of irreversible
-anonymization. Logs never include object contents, parsed values, field names,
-raw bucket names, or raw object keys.
-S3 ETag is also excluded because it can act as a content fingerprint for some
-uploads.
+## Uploader access contract
 
-Lambda's native JSON format creates an outer runtime envelope; the application
-record is serialized inside its `message` field and the smoke helper unwraps it.
-Every application entry carries `service`, `environment`, and
-`log_schema_version=2` fields for consistent queries and future enrichment. The
-log group has a `CentralLoggingOptIn=true` tag as a declarative integration
-point for a platform-owned forwarding service. This stack does not create that
-forwarding pipeline.
+**Platform prerequisite:** This stack intentionally creates no human or
+workload uploader identity. The account owner supplies a temporary-credential
+role outside this stack.
+
+The minimum application capability is `s3:PutObject` on the deployed bucket's
+`incoming/*.json` object ARN. In an S3 IAM resource ARN, `*` can match nested
+key text; it is not limited to one path segment. Normal uploaders do not need
+bucket listing, object reads, deletes, version deletion, IAM administration, or
+log access. Cross-account uploads require an explicit bucket-policy decision
+and are not part of the current design. Smoke operators have separate cleanup
+permissions because the test creates and removes its own object versions.
 
 ## Security boundaries
 
-- Bucket is private: block public access, owner-enforced, SSE-S3 encrypted, and
-  versioned.
-- Bucket policy denies all `s3:*` when `aws:SecureTransport` is false.
-- The Lambda execution role trusts only the Lambda service and may
-  `s3:GetObject` / `s3:GetObjectVersion` only on `incoming/*`; it has no S3
-  write permissions.
-- S3-to-Lambda invoke permission is constrained by source account and bucket ARN.
-- Logs stay structured and free of raw bucket/key and payload contents.
+- The bucket is private, TLS-only, owner-enforced, SSE-S3 encrypted, versioned,
+  and retained.
+- The Lambda role may call `s3:GetObject` and `s3:GetObjectVersion` only on
+  `incoming/*`; it has no S3 write permission.
+- S3 invocation is constrained by source account and bucket ARN.
+- Account identities, GitHub OIDC, and CDK bootstrap roles are platform-owned
+  and remain outside the application stack.
+- Pull-request CI has no AWS credential path. Repository deployment obtains
+  short-lived credentials only after the protected environment gate.
 
-The GitHub OIDC provider, deploy role, and CDK bootstrap roles are
-account-provisioned controls outside this application stack. The workflow only
-requests short-lived credentials from that existing trust boundary.
+## Safe logging
 
-## Errors
+Successful records include a SHA-256 `object_ref`, bounded version/sequencer
+metadata, sizes, and `parsed_field_count`. `object_ref` uses length-delimited
+bucket, decoded key, and version inputs, allowing retry correlation without raw
+names. It is pseudonymous, not anonymous.
+
+Logs exclude object contents, parsed values, JSON field names, raw bucket names,
+raw keys, and S3 ETags. Invalid or oversized metadata is omitted. The ETag is
+excluded because some upload types make it a content fingerprint.
+
+Lambda's native JSON format provides an outer runtime envelope. The application
+record is JSON inside the envelope's `message` field. Every application record
+includes `service`, `environment`, and `log_schema_version=2`. The log group's
+`CentralLoggingOptIn=true` tag is only an integration signal; this stack does
+not create a forwarding pipeline.
+
+## Failure behavior
 
 | Class | Examples | Behavior |
 | --- | --- | --- |
-| Permanent | Unexpected key or record shape, oversized object, empty/multiline input, invalid UTF-8/JSON, non-object JSON | Logged as `rejected` with a reason code; other records in the same event continue |
-| Operational | S3 read failures, unexpected service errors | Logged as `failed` with a safe exception class and no application traceback, then converted to a generic `OperationalError` so the platform retries without emitting the original exception message |
+| Permanent rejection | Unexpected key/record, oversized object, empty or multiline input, invalid UTF-8/JSON, non-object JSON | Log `rejected` with a reason code and continue with other records |
+| Operational error | S3 read failure or unexpected service error | Log `failed` with a safe exception class, then raise generic `OperationalError` for retry |
 
-The Lambda runtime can still emit its own standard record for the generic
-`OperationalError`. The original SDK/service exception message and traceback
-are deliberately not chained because they could contain a bucket, key, or
-endpoint URL.
+The original service exception message and traceback are not chained because
+they could contain a bucket, key, or endpoint. The Lambda runtime may still emit
+its standard record for the generic raised error.
 
-## Delivery semantics
+## Delivery and retention
 
-S3 event notifications to Lambda are at-least-once. The same object create can
-invoke more than once. This stack does not implement idempotency keys or
-deduplication; treat processing as potentially repeated.
+S3 notifications are at-least-once, so duplicate invocations are possible.
+Today the only side effect is another validation log. Before adding a database
+write or outbound call, introduce a durable idempotency decision.
 
-The handler reads the exact S3 version named by the event when one is present.
-The retained bucket keeps noncurrent versions until an operator removes them;
-add automatic expiration only after defining an approved retention period.
+The handler reads the event's exact S3 version when present. The retained,
+versioned bucket prevents accidental data loss but grows until an approved
+retention policy or explicit cleanup removes versions. Only incomplete
+multipart uploads expire automatically after seven days.
 
-## Out of scope
+The Lambda uses the boto3 version supplied by the AWS runtime. Development and
+test SDK dependencies are pinned; vendor boto3 only when an exact runtime SDK
+patch is more important than the larger asset and maintenance surface.
 
-Services and patterns intentionally not implemented are listed in
-[intentional-omissions.md](intentional-omissions.md).
+## Intentional omissions
+
+| Omitted | Why not now | Reconsider when |
+| --- | --- | --- |
+| SQS and DLQ | Direct S3-to-Lambda is the required smallest path | Buffering, backpressure, poison isolation, or durable replay is required |
+| Kinesis, Firehose, OpenSearch | Current output is operational logging; forwarding is platform-owned | Multiple real-time consumers or central logging requires it |
+| VPC, NAT, endpoints | There is no private dependency | A private-only upload path, private dependency, or egress policy is required |
+| Customer-managed KMS key | SSE-S3 meets the current encryption requirement | Compliance requires a customer-managed key |
+| Alarms and reserved concurrency | Not required to prove the parser path | Operators need paging or explicit cost/concurrency guardrails |
+| Idempotency store | Current processing has no side effect beyond logs | A database write or outbound side effect is added |
+| Downstream sink | No destination or side-effect contract exists | Product requirements define schema, retries, and idempotency |
+| Vendored boto3 | Runtime boto3 keeps the asset small | Exact SDK patch reproducibility is required |
+| Object-version expiration | No retention period has been approved | Legal and operations approve deletion and recovery policy |
+| Continuous drift detection | Merge-triggered changes are the current reconciliation model | Multiple operators or compliance justify scheduled detection |
+| Stack termination protection | Retained data reduces accidental-loss risk | Control-plane deletion becomes an accepted operational risk |
+| S3 data-event audit trail | Account-level audit logging is platform-owned and can add cost | Investigations or compliance require object-level API history |
+
+These are explicit tradeoffs, not claims that the omitted controls are never
+useful. Change them only with a requirement, owner, test, and operating plan.
