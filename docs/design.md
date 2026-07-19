@@ -11,7 +11,7 @@ Contributors and maintainers evaluating application or infrastructure behavior.
 
 ## What this does not do
 
-Does not grant access or deployment commands—see
+Does not grant access or deployment commands. See
 [platform access](platform-access.md) and [operations](operations.md).
 
 ## System in one minute

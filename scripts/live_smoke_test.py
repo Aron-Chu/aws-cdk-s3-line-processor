@@ -535,7 +535,7 @@ def run_smoke_matrix(
         if missing_context:
             failures.append(
                 f"{missing_context}/{len(records)} log records missing "
-                f"{', '.join(EXPECTED_LOG_CONTEXT)} — deployed Lambda likely "
+                f"{', '.join(EXPECTED_LOG_CONTEXT)}; deployed Lambda likely "
                 "predates the logging contract; redeploy from main and rerun smoke"
             )
 

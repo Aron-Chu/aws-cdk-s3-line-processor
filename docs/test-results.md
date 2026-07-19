@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Dated evidence for an exact commit or named working-tree candidate—not an
+Dated evidence for an exact commit or named working-tree candidate, not an
 evergreen status page.
 
 ## Evidence rule
