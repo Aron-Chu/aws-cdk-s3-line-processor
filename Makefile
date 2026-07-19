@@ -8,7 +8,7 @@ REGION ?= us-west-2
 STACK ?= S3LineProcessorStack
 LOCK_ARGS := --quiet --python-version 3.14 --universal --generate-hashes --no-annotate --custom-compile-command "make lock"
 
-.PHONY: help setup lock lock-check lint test synth check aws-check bootstrap diff deploy smoke
+.PHONY: help setup lock lock-check lint test synth check aws-check sandbox-ack bootstrap diff deploy smoke
 
 help:
 	@echo "make setup                              Create/reuse .venv, install deps, enable pre-commit"
@@ -19,12 +19,12 @@ help:
 	@echo "make synth                              Run cdk synth"
 	@echo "make check                              lock-check + lint + test + synth"
 	@echo "make aws-check PROFILE=<profile>        Verify the target AWS identity"
-	@echo "make bootstrap PROFILE=<profile>        Bootstrap PROFILE/REGION once"
+	@echo "make bootstrap PROFILE=<profile>        Bootstrap a reviewer sandbox (ack required)"
 	@echo "make diff PROFILE=<profile>             Review the live CDK diff"
-	@echo "make deploy PROFILE=<profile>           check + diff + local sandbox deploy"
-	@echo "make smoke PROFILE=<cli-profile>        Live AWS smoke (IAM user or SSO profile)"
+	@echo "make deploy PROFILE=<profile>           check + diff + reviewer sandbox deploy (ack required)"
+	@echo "make smoke PROFILE=<sso-profile>        Authorized live AWS smoke"
 	@echo ""
-	@echo "Example: make smoke PROFILE=s3-line-processor-operator"
+	@echo "Local bootstrap/deploy require: SANDBOX_ACK=reviewer-owned"
 
 setup:
 	@if [ ! -x "$(PY)" ]; then \
@@ -77,7 +77,15 @@ aws-check:
 	@test -n "$(PROFILE)" || { echo "Usage: make $@ PROFILE=<aws-profile> [REGION=$(REGION)]"; exit 2; }
 	aws sts get-caller-identity --profile "$(PROFILE)" --region "$(REGION)"
 
-bootstrap: aws-check
+sandbox-ack:
+	@test "$(SANDBOX_ACK)" = "reviewer-owned" || { \
+		echo "Refusing a local AWS write."; \
+		echo "Use the protected GitHub Deploy workflow for the repository stack."; \
+		echo "For your own sandbox, add: SANDBOX_ACK=reviewer-owned"; \
+		exit 2; \
+	}
+
+bootstrap: sandbox-ack aws-check
 	@test -x "$(PY)" || { echo "Missing $(PY). Run: make setup"; exit 1; }
 	@account=$$(aws sts get-caller-identity --profile "$(PROFILE)" --query Account --output text); \
 	PATH="$(VENV_BIN):$$PATH" AWS_REGION="$(REGION)" AWS_DEFAULT_REGION="$(REGION)" \
@@ -88,15 +96,15 @@ diff: aws-check
 	PATH="$(VENV_BIN):$$PATH" AWS_REGION="$(REGION)" AWS_DEFAULT_REGION="$(REGION)" \
 		npx cdk diff --profile "$(PROFILE)"
 
-deploy: check diff
+deploy: sandbox-ack check diff
 	PATH="$(VENV_BIN):$$PATH" AWS_REGION="$(REGION)" AWS_DEFAULT_REGION="$(REGION)" \
 		npx cdk deploy --profile "$(PROFILE)"
 
 smoke:
 	@test -x "$(PY)" || { echo "Missing $(PY). Run: make setup"; exit 1; }
 	@test -n "$(PROFILE)" || { \
-		echo "Usage: make smoke PROFILE=s3-line-processor-operator"; \
-		echo "PROFILE must be a real local AWS CLI profile (IAM user or SSO), not a docs placeholder."; \
+		echo "Usage: make smoke PROFILE=<SMOKE_SSO_PROFILE>"; \
+		echo "PROFILE must be an approved local AWS CLI profile, not a docs placeholder."; \
 		exit 2; \
 	}
 	$(PY) scripts/live_smoke_test.py \

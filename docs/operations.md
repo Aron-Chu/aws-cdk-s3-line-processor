@@ -1,213 +1,397 @@
 # Deployment and maintenance
 
-Commands assume Ubuntu/WSL (or similar Linux).
+## Purpose
+
+Provide routine, repeatable procedures for validating, deploying, observing,
+maintaining, recovering, and cleaning up the stack.
+
+## Who should use this
+
+Repository maintainers, approved deployment reviewers, and IAM Identity Center
+smoke operators. Commands assume Ubuntu/WSL or a similar Linux environment.
+
+## What this does not do
+
+This document does not create AWS identities, GitHub OIDC trust, CDK bootstrap
+roles, repository rules, or environment protections. Platform owners prepare
+those controls using [platform access](platform-access.md).
+
+## Status labels
+
+- **Implemented:** Verified repository or workflow behavior.
+- **Platform prerequisite:** Required outside this stack.
+- **Future hardening:** Designed but not yet implemented.
 
 ## Prerequisites
 
-- Git, GNU Make, Node.js 24+, AWS CLI, and either `uv` or Python 3.14
-- Repository access to protected `main` and the GitHub `production` environment
+- Git, GNU Make, Node.js 24+, AWS CLI v2, and either `uv` or Python 3.14.
+- For code review: repository access and the workflow checks required by the
+  default-branch ruleset.
+- For deployment approval: access to the protected GitHub `production`
+  environment.
+- For live operations: an approved IAM Identity Center profile for the intended
+  account and region.
+
+The GitHub environment name `production` describes the deployment-control
+boundary. The current stack resources and application logs are tagged
+`Sandbox`.
 
 ## Local validation
 
+Local validation requires no AWS access:
+
 ```bash
 make setup
-make check
-```
-
-`make setup` creates a seeded Python 3.14 virtualenv, installs the hash-pinned
-Python graph, runs `npm ci`, and enables pre-commit. `make check` runs lock,
-lint, unit, coverage, and synth checks without AWS access.
-
-`VENV`, `PROFILE`, `REGION`, and `STACK` may be overridden. If WSL inherits a
-Windows temporary directory, set `TMPDIR=/tmp` before tests. Run `make help` for
-individual targets. If Windows also exports `TMP` or `TEMP`, override all three:
-
-```bash
 TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
 ```
 
-## Deploy this repository: GitHub Actions
+`make setup` creates a Python 3.14 virtual environment, installs the hash-pinned
+Python graph, runs `npm ci`, and installs pre-commit. `make check` verifies the
+lock, runs pre-commit and pytest with coverage, and synthesizes CloudFormation.
 
-Pull requests run credential-free CI. A merge to protected `main` starts Deploy
-when infrastructure, runtime, dependency, or deploy-workflow paths change; its
-validate job checks the exact merged commit before any AWS access.
-Documentation-only merges do not start Deploy. Manual **Run workflow** also
-works.
+Run `make help` for individual targets. `VENV`, `PROFILE`, `REGION`, and `STACK`
+may be overridden. The three `/tmp` overrides prevent WSL from passing an
+unusable Windows temporary path to Linux tools.
+
+**Expected result:** Every hook and test passes and CDK synthesizes one stack.
+
+**Common failure:** If an absolute virtual environment is needed, pass it as
+`VENV=/absolute/path`; the Makefile resolves its binary directory correctly.
+
+**Stop condition:** Do not open or merge a PR with a stale lock, failing test,
+unreviewed generated template change, or unexpected tracked file.
+
+## Contribution handoff
+
+[Contributing](../CONTRIBUTING.md) owns branch, testing, agent, review, and PR
+requirements. Operations begin only after a reviewed change reaches protected
+`main`. A merged pull request is repository evidence, not deployment evidence.
+
+## Repository deployment
+
+**Implemented:** Relevant changes merged to protected `main` start the Deploy
+workflow. Documentation-only merges do not deploy. A maintainer can also run the
+workflow manually from the default branch.
+
+**Platform prerequisite:** GitHub environment protection supplies the human
+approval gates. The workflow declares `environment: production` for both
+protected jobs, but repository administrators own its reviewer assignments,
+protected-branch rule, and administrator-bypass setting.
 
 ```text
-validate (no AWS)
-  -> Approve AWS plan preparation (no stack execution)
-  -> prepare one CloudFormation change set
-  -> review DescribeChangeSet artifact
-     -> empty: stop
-     -> changes: Approve exact plan execution
-  -> verify artifact against AWS
-  -> execute that exact ChangeSetId and wait
-  -> operator runs make smoke separately
+validate exact merged commit without AWS
+  -> approve plan preparation
+  -> check out, install, and synthesize without AWS credentials
+  -> obtain 15-minute OIDC session
+  -> publish asset and prepare CloudFormation change set
+  -> review account-redacted DescribeChangeSet artifact
+     -> empty plan: skip execution
+     -> changes: approve exact plan execution
+  -> obtain a new 15-minute OIDC session
+  -> compare artifact with the live immutable change set
+  -> execute that ID and wait for the final stack status
+  -> approved operator runs smoke separately
 ```
 
-The plan job synthesizes once, publishes required CDK assets, and prepares a
-commit/run-named change set without executing it. Its 30-day artifact contains
-the stable, review-relevant fields from an account-redacted `DescribeChangeSet`
-response plus a short resource table. Volatile response metadata such as the
-creation timestamp and pagination token is excluded. A known CloudFormation
-no-change result skips execute without parsing human CDK output.
+The plan phase may publish the Lambda asset to the CDK bootstrap bucket, but it
+does not execute the application change set. The execute job has no checkout,
+Python, Node, dependency installation, synthesis, or CDK command, so it cannot
+build a replacement plan. Every newly run plan job uses its run attempt in the
+change-set and artifact names. If GitHub reruns only a failed execute job, it
+reuses the successful plan job's emitted artifact rather than creating a plan.
 
-The execute job intentionally has no checkout, Python, Node, dependency
-installation, synthesis, or CDK command. After the second approval it:
+`--require-approval never` disables only CDK's terminal prompt. It does not
+bypass the protected GitHub environment approvals.
 
-1. downloads the plan artifact;
-2. verifies the commit, redacted change-set ID, status, and nonempty plan;
-3. obtains a new 15-minute OIDC session;
-4. describes the live change set and compares both its immutable ID and its
-   normalized, account-redacted review fields with the approved artifact;
-5. captures the stack status before execution to select the create or update
-   waiter without reading stale post-execution state; and
-6. executes that ID with an idempotent request token, waits until CloudFormation
-   acknowledges execution, then waits for the matching create or update to
-   finish and verifies the final stack status.
+### Deploy procedure
 
-This means the second approval authorizes an already-created plan.
-`--require-approval never` only disables the CDK terminal prompt; it does not
-bypass either GitHub environment approval.
+1. Open the Deploy run for the merged commit.
+2. Confirm the `validate` job passed for the expected commit.
+3. Approve plan preparation only if the account, region, actor, and commit are
+   correct.
+4. Review the short change table and the complete redacted JSON artifact.
+5. Stop on an unexpected resource, replacement, IAM change, deletion, or
+   unresolved review question.
+6. If the plan is empty, confirm execution was skipped.
+7. If the plan is correct, approve execution of that exact change set.
+8. Confirm the execute job compares the live plan and finishes with the expected
+   CloudFormation status.
 
-Required `production` environment configuration:
+Read-only verification:
 
-| Kind | Name | Purpose |
-| --- | --- | --- |
-| Secret | `AWS_ROLE_ARN` | Existing OIDC role ARN; kept out of workflow logs |
-| Secret | `AWS_ACCOUNT_ID` | Account allowlist and redaction/reconstruction value |
-| Variable | `AWS_REGION` | Target AWS region |
+```bash
+gh run view <RUN_ID> \
+  --repo <OWNER>/<REPOSITORY> \
+  --json headSha,event,status,conclusion,jobs,url
+```
 
-The account must already have CDK bootstrap resources, a GitHub OIDC provider,
-and a deploy role trusted only for:
+**Expected result:** The run is tied to the intended `main` commit; validation,
+plan, and applicable execute jobs succeed. An empty plan skips execute.
 
-- Audience: `sts.amazonaws.com`
-- Subject: the exact `sub` claim for this repository's `production` environment
+**Common failure:** A plan job that cannot assume AWS may have an expired or
+incorrect environment configuration. Do not replace OIDC with stored keys or
+broaden the role subject; ask the platform owner to inspect the live trust.
 
-Do not use a wildcard subject or stored AWS keys. These account-level resources
-are intentionally outside this application stack.
+**Stop condition:** Never approve an artifact that differs from the intended
+commit or contains an unexplained IAM, replacement, or deletion change.
 
-The role must retain the permissions already required by CDK asset publication
-and change-set creation, plus `cloudformation:DescribeChangeSet`; execution also
-requires `cloudformation:ExecuteChangeSet` and the stack waiter reads. Keep the
-permissions resource-scoped wherever the CDK bootstrap model allows it.
+Both protected jobs currently use one deploy-capable role. See [the current
+role boundary](platform-access.md#current-role-boundary-and-future-hardening)
+for the risk and the future split-role design.
 
-### Current limitation and next hardening
+## Post-deploy smoke test
 
-Both protected jobs currently reference `production` and assume the same role.
-The approval timing is real, but Approve #1 still releases a role capable of
-execution. Do not hide this limitation in an interview.
+`make smoke` is write-capable: it uploads test objects and deletes the exact
+versions it creates. Run it only with explicit authorization and an approved
+Identity Center smoke profile.
 
-The account/platform owner can close it without changing `stack.py`:
+```bash
+aws sso login --profile <SMOKE_SSO_PROFILE>
+aws sts get-caller-identity --profile <SMOKE_SSO_PROFILE>
 
-| Boundary | GitHub environment | OIDC role capability |
-| --- | --- | --- |
-| Plan | `production-plan` | Publish this stack's assets, create and describe its change set; deny execute |
-| Execute | `production-execute` | Describe and execute the approved change set; cannot publish or create a replacement plan |
+make smoke \
+  PROFILE=<SMOKE_SSO_PROFILE> \
+  REGION=<AWS_REGION> \
+  STACK=S3LineProcessorStack
+```
 
-Give each environment its own exact OIDC `sub` trust, secret role ARN, required
-reviewer policy, and no administrator bypass. The workflow should switch only
-after both roles and environment protections exist; the application repository
-must not create account-level GitHub trust or bootstrap roles.
+The profile needs scoped access to `cloudformation:DescribeStacks`,
+`cloudformation:DescribeStackResources`, `logs:FilterLogEvents`,
+`s3:PutObject`, and `s3:DeleteObjectVersion` for this stack and the smoke prefix.
+It does not need deployment or IAM administration.
 
-For a team, require an independent reviewer and prevent self-review. A solo
-repository can demonstrate the mechanics but cannot manufacture separation of
-duties.
+**Expected result:** Nine application outcomes cover valid, malformed,
+oversized, ignored-suffix, and rapid-overwrite cases; sensitive values are
+absent from logs; all created versions are removed.
 
-Run `make smoke` separately with an approved operator profile; the deploy role
-does not need application-data or log-reading permissions. `--require-approval
-never` is used only for the CDK CLI prompt because GitHub provides the prepare
-and execute approval boundaries.
+**Common failure:** A timeout can mean notification delay, wrong stack/region,
+missing log permission, or an expired SSO session. Inspect identity and stack
+status before retrying; do not grant broad access immediately.
 
-## External reviewer: deploy to your own sandbox
+**Stop condition:** If cleanup fails, preserve the run output and remove only
+the reported version IDs. Do not empty the bucket or run a broad delete.
 
-This path is for a fork or clone targeting the reviewer's AWS account. It does
-not replace this repository's protected GitHub deployment path.
+## Safe observation
+
+Discover the log group from CloudFormation rather than hardcoding a physical
+name:
+
+```bash
+export LOG_GROUP="$(aws cloudformation describe-stack-resources \
+  --stack-name S3LineProcessorStack \
+  --profile <READ_ONLY_SSO_PROFILE> \
+  --region <AWS_REGION> \
+  --query "StackResources[?ResourceType=='AWS::Logs::LogGroup'].PhysicalResourceId | [0]" \
+  --output text)"
+
+aws logs filter-log-events \
+  --log-group-name "$LOG_GROUP" \
+  --profile <READ_ONLY_SSO_PROFILE> \
+  --region <AWS_REGION> \
+  --limit 20
+```
+
+Application JSON is inside Lambda's outer `message` field. Approved fields are
+documented in [the design](design.md). Stop and treat it as a security issue if
+logs contain raw bucket/key, payload values, field names, credentials, or ETag.
+
+## Failure diagnosis and recovery
+
+Start read-only:
+
+```bash
+aws cloudformation describe-stacks \
+  --stack-name S3LineProcessorStack \
+  --profile <OPERATOR_SSO_PROFILE> \
+  --region <AWS_REGION> \
+  --query 'Stacks[0].StackStatus' \
+  --output text
+
+aws cloudformation describe-stack-events \
+  --stack-name S3LineProcessorStack \
+  --profile <OPERATOR_SSO_PROFILE> \
+  --region <AWS_REGION> \
+  --max-items 20
+```
+
+| State | Action |
+| --- | --- |
+| `*_IN_PROGRESS` | Wait; do not start another deployment |
+| `UPDATE_ROLLBACK_COMPLETE` | Diagnose the failed resource, fix through a new PR, and prepare a new plan |
+| `UPDATE_ROLLBACK_FAILED` | Escalate to the platform owner for reviewed continue-rollback parameters |
+| Unexpected replacement/deletion | Stop and review the approved plan and CloudTrail before acting |
+
+Only an authorized platform owner may resume a failed rollback:
+
+```bash
+aws cloudformation continue-update-rollback \
+  --stack-name S3LineProcessorStack \
+  --profile <PLATFORM_ADMIN_PROFILE> \
+  --region <AWS_REGION>
+```
+
+**Expected result:** CloudFormation returns the stack to a stable rollback state;
+a later fix still follows the normal PR and change-set workflow.
+
+**Common failure:** A resource that cannot roll back may need specific
+`--resources-to-skip`. Skipping resources creates drift; do not guess the list.
+
+**Stop condition:** Never delete the retained bucket, bypass GitHub controls, or
+make an unrecorded console edit to force the application stack green.
+
+## External reviewer sandbox
+
+This is a separate path for a fork or clone in the reviewer's own AWS sandbox.
+It never replaces repository deployment.
 
 ```bash
 git clone https://github.com/Aron-Chu/aws-cdk-s3-line-processor.git
 cd aws-cdk-s3-line-processor
 
-export PROFILE=my-sandbox-profile
-export REGION=us-west-2
+export PROFILE=<SANDBOX_SSO_PROFILE>
+export REGION=<AWS_REGION>
+export SANDBOX_ACK=reviewer-owned
 
 make setup
-make aws-check       # confirm the account before any write
-make bootstrap       # once per account/region; skip if already bootstrapped
-make deploy          # local checks, cdk diff, then normal CDK approval
-make smoke           # nine live cases; deletes the versions it creates
+make aws-check
+make bootstrap
+make deploy
+make smoke
 ```
 
-The profile must be an approved non-root identity allowed to bootstrap and
-deploy CDK in that sandbox. Smoke additionally needs scoped access to
-`cloudformation:DescribeStacks`, `cloudformation:DescribeStackResources`,
-`logs:FilterLogEvents`, `s3:PutObject`, and `s3:DeleteObjectVersion`. Teams
-should separate deploy and smoke identities; one sandbox profile is sufficient
-for a reviewer if it has both permission sets.
+`make deploy` runs local checks and `cdk diff`, then uses the normal interactive
+CDK approval. The acknowledgement prevents either local write command from
+being mistaken for the repository deployment path. `make bootstrap` writes
+account-level resources and can use broad CDK defaults; run it only in the
+reviewer's disposable sandbox after confirming the identity.
+
+**Expected result:** The reviewer owns all created resources and can reproduce
+the live path independently.
+
+**Common failure:** `aws-check` showing an unintended account means the profile
+or cached session is wrong. Stop instead of overriding the account in a command.
+
+**Stop condition:** Never point this path at the repository's shared account or
+use it to bypass protected-main deployment.
 
 ## Dependency maintenance
 
-`requirements.txt` and `requirements-dev.txt` are the human-edited inputs.
-`requirements.lock` pins the full transitive graph with hashes; local setup, CI,
-and deploy install from that lockfile only.
+`requirements.txt` and `requirements-dev.txt` are human-edited inputs.
+`requirements.lock` is the hashed transitive graph used by local setup, CI, and
+deployment. Node dependencies remain pinned by `package-lock.json`.
 
-After a Python pin change:
+After a Python dependency change:
 
 ```bash
 make setup
 make lock
-make check
+TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
 ```
 
-Commit the input files and `requirements.lock` together. Node stays locked by
-`package-lock.json`; Actions and pre-commit hooks have separate Dependabot
-groups.
+Commit Python inputs and `requirements.lock` together. Review Dependabot PRs for
+Python, npm, GitHub Actions, and pre-commit; do not merge an update based only on
+the bot label.
 
-## Maintain
+## Maintenance cadence
 
-- Review Dependabot PRs and regenerate `requirements.lock` for Python changes.
-- Run `make check` and review `make diff PROFILE=...` before sandbox deploys.
-- Keep `architecture.excalidraw` and `architecture.svg` synchronized.
+| When | Required review |
+| --- | --- |
+| Every PR | Full local validation, diff, security/architecture impact, documentation ownership |
+| Every deployment | Frozen plan, final stack status, authorized smoke, dated evidence |
+| Monthly | Dependabot, CodeQL, secret scanning, runtime and action support status |
+| Quarterly | Platform-access checklist, drift, and retention decision |
+| After an incident | CloudTrail and stack events, credential exposure, rollback evidence, corrective test |
 
-## Clean up
-
-The bucket and TLS policy are retained. Discover the bucket, confirm the account
-and that the bucket is dedicated to this stack, then clear its notification and
-destroy the function:
+Manual drift detection is not automated today:
 
 ```bash
-export BUCKET="$(aws cloudformation describe-stacks \
+export DRIFT_ID="$(aws cloudformation detect-stack-drift \
   --stack-name S3LineProcessorStack \
-  --profile "$PROFILE" \
-  --region "$REGION" \
-  --query "Stacks[0].Outputs[?OutputKey=='InputBucketName'].OutputValue | [0]" \
+  --profile <PLATFORM_AUDIT_PROFILE> \
+  --region <AWS_REGION> \
+  --query StackDriftDetectionId \
   --output text)"
 
-aws s3api put-bucket-notification-configuration \
-  --bucket "$BUCKET" \
-  --notification-configuration '{}' \
-  --profile "$PROFILE" \
-  --region "$REGION"
-
-AWS_REGION="$REGION" npx cdk destroy --profile "$PROFILE"
+aws cloudformation describe-stack-drift-detection-status \
+  --stack-drift-detection-id "$DRIFT_ID" \
+  --profile <PLATFORM_AUDIT_PROFILE> \
+  --region <AWS_REGION>
 ```
 
-Deleting the retained, versioned bucket is a separate destructive step. Remove
-every object version and delete marker before deleting the empty bucket:
+Record the result; do not reconcile drift through an unreviewed console edit.
+
+## Cleanup
+
+The bucket and TLS policy are retained when the stack is destroyed. Cleanup is
+destructive and requires explicit authorization.
+
+### Destroy control-plane resources while retaining data
+
+1. Confirm identity, region, stack, and ownership of the bucket.
+2. Discover the bucket through the stack output:
+
+   ```bash
+   export BUCKET="$(aws cloudformation describe-stacks \
+     --stack-name S3LineProcessorStack \
+     --profile <PLATFORM_ADMIN_PROFILE> \
+     --region <AWS_REGION> \
+     --query "Stacks[0].Outputs[?OutputKey=='InputBucketName'].OutputValue | [0]" \
+     --output text)"
+   ```
+
+3. Clear the notification before destroying the function:
+
+   ```bash
+   aws s3api put-bucket-notification-configuration \
+     --bucket "$BUCKET" \
+     --notification-configuration '{}' \
+     --profile <PLATFORM_ADMIN_PROFILE> \
+     --region <AWS_REGION>
+
+   AWS_REGION=<AWS_REGION> npx cdk destroy \
+     --profile <PLATFORM_ADMIN_PROFILE>
+   ```
+
+**Expected result:** Lambda, role, and log group are removed; the versioned
+bucket and TLS policy remain.
+
+**Common failure:** Destroy can fail if the notification still references the
+function. Re-read the bucket notification and stack events; do not empty the
+bucket as a workaround.
+
+**Stop condition:** Stop if the discovered bucket is empty, unexpected, shared,
+or not dedicated to this stack.
+
+### Delete retained data separately
+
+List versions and delete markers first:
 
 ```bash
 aws s3api list-object-versions \
-  --bucket "$BUCKET" --profile "$PROFILE" --region "$REGION"
+  --bucket "$BUCKET" \
+  --profile <PLATFORM_ADMIN_PROFILE> \
+  --region <AWS_REGION>
+```
 
-# Repeat for every VersionId and DeleteMarker.
+Delete only reviewed keys and version IDs, then delete the empty bucket:
+
+```bash
 aws s3api delete-object \
   --bucket "$BUCKET" \
-  --key OBJECT_KEY \
-  --version-id VERSION_ID \
-  --profile "$PROFILE" \
-  --region "$REGION"
+  --key <OBJECT_KEY> \
+  --version-id <VERSION_ID> \
+  --profile <PLATFORM_ADMIN_PROFILE> \
+  --region <AWS_REGION>
 
 aws s3api delete-bucket \
-  --bucket "$BUCKET" --profile "$PROFILE" --region "$REGION"
+  --bucket "$BUCKET" \
+  --profile <PLATFORM_ADMIN_PROFILE> \
+  --region <AWS_REGION>
 ```
+
+**Expected result:** Only explicitly reviewed versions are removed; bucket
+deletion succeeds only when no object version or delete marker remains.
+
+**Stop condition:** Do not use a recursive delete, wildcard, `git clean`, or a
+bulk script against retained data without a separately reviewed inventory and
+recovery decision.
