@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -12,8 +13,12 @@ def _sandbox_ack(value: str | None = None) -> subprocess.CompletedProcess[str]:
     if value is not None:
         environment["SANDBOX_ACK"] = value
 
+    make = shutil.which("make")
+    if make is None:
+        raise RuntimeError("make executable not found")
+
     return subprocess.run(
-        ["make", "--no-print-directory", "sandbox-ack"],
+        [make, "--no-print-directory", "sandbox-ack"],
         cwd=ROOT,
         env=environment,
         capture_output=True,

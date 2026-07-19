@@ -45,7 +45,11 @@ def test_empty_cloudformation_plan_skips_execute() -> None:
 
 
 def test_plan_evidence_is_unique_and_stable_across_reruns() -> None:
-    assert "github.run_attempt" in PLAN_JOB
+    artifact_name = (
+        "ARTIFACT_NAME: production-change-set-"
+        "${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}"
+    )
+    assert artifact_name in PLAN_JOB
     assert "artifact_name: ${{ steps.prepare.outputs.artifact_name }}" in PLAN_JOB
     assert "name: ${{ steps.prepare.outputs.artifact_name }}" in PLAN_JOB
     assert "name: ${{ needs.plan.outputs.artifact_name }}" in EXECUTE_JOB
