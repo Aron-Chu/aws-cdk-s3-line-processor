@@ -7,8 +7,8 @@ maintaining, recovering, and cleaning up the stack.
 
 ## Who should use this
 
-Repository maintainers, approved deployment reviewers, and IAM Identity Center
-smoke operators. Commands assume Ubuntu/WSL or a similar Linux environment.
+Repository maintainers, deployment approvers, and IAM Identity Center smoke
+operators. Commands assume Ubuntu/WSL or a similar Linux environment.
 
 ## What this does not do
 
@@ -147,54 +147,36 @@ for the risk and the future split-role design.
 ## Post-deploy smoke test
 
 Shared-account smoke uses a scoped Identity Center profile. Local bootstrap or
-`cdk deploy` against the shared repository account is prohibited; deployment
-stays on the protected GitHub Deploy workflow.
+`cdk deploy` against the shared repository account is prohibited.
 
 ```text
 aws sso login
   -> make smoke-check
-  -> human confirms authorization
+  -> human authorization
   -> make smoke
 ```
 
 ```bash
 aws sso login --profile <SMOKE_SSO_PROFILE>
-
-make smoke-check \
-  PROFILE=<SMOKE_SSO_PROFILE> \
-  REGION=<AWS_REGION> \
-  STACK=S3LineProcessorStack
-
+make smoke-check PROFILE=<SMOKE_SSO_PROFILE> REGION=<AWS_REGION>
 # After explicit human authorization:
-make smoke \
-  PROFILE=<SMOKE_SSO_PROFILE> \
-  REGION=<AWS_REGION> \
-  STACK=S3LineProcessorStack
+make smoke PROFILE=<SMOKE_SSO_PROFILE> REGION=<AWS_REGION>
 ```
 
-`make smoke-check` is read-only. It confirms a temporary assumed-role Identity
-Center session, stack discovery, and log-read access. It does **not** prove
-`s3:PutObject` or `s3:DeleteObjectVersion`.
-
-`make smoke` is write-capable: it runs the same preflight, uploads randomized
-objects under `incoming/smoke-*/*` (including a `.txt` notification-filter
-case), and deletes only the exact versions it created. Run it only with
-explicit authorization.
-
-The complete five-action Smoke Operator contract lives in
+`make smoke-check` is read-only and does **not** prove S3 write or
+version-cleanup permissions. `make smoke` runs the same preflight, then uploads
+under `incoming/smoke-*/*` and deletes only the exact versions it created.
+The five-action permission contract is owned by
 [platform access](platform-access.md#smoke-operator-permission-contract).
 
-**Expected result:** Nine application outcomes cover valid, malformed,
-oversized, ignored-suffix, and rapid-overwrite cases; sensitive values are
-absent from logs; all created versions are removed.
+**Expected result:** Nine application outcomes; sensitive values absent from
+logs; created versions removed.
 
-**Common failure:** A timeout can mean notification delay, wrong stack/region,
-missing log permission, or an expired SSO session. `make smoke-check` failing
-closed usually means the platform permission set is missing or the session is
-wrong—do not grant broad access to unblock it.
+**Common failure:** Expired SSO, wrong stack/region, or a missing platform
+permission set. Do not grant broad access to unblock `smoke-check`.
 
-**Stop condition:** If cleanup fails, preserve the run output and remove only
-the reported version IDs. Do not empty the bucket or run a broad delete.
+**Stop condition:** If cleanup fails, remove only the reported version IDs. Do
+not empty the bucket.
 
 ## Safe observation
 

@@ -15,7 +15,6 @@ from typing import Any
 
 import boto3
 from botocore.exceptions import (
-    BotoCoreError,
     ClientError,
     TokenRetrievalError,
     UnauthorizedSSOTokenError,
@@ -120,11 +119,21 @@ def require_temporary_assumed_role(identity: Mapping[str, Any]) -> None:
         raise SmokePreflightError("unsupported long-lived identity")
 
 
-def profile_uses_identity_center(session: Any) -> bool:
-    try:
-        config = session.get_scoped_config()
-    except Exception:  # noqa: BLE001 - config may be incomplete ambient creds
-        return False
+def scoped_profile_config(session: Any) -> Mapping[str, Any]:
+    """Read profile config from the underlying botocore session only."""
+    botocore_session = getattr(session, "_session", None)
+    if botocore_session is None:
+        return {}
+    get_scoped_config = getattr(botocore_session, "get_scoped_config", None)
+    if not callable(get_scoped_config):
+        return {}
+    config = get_scoped_config()
+    if not isinstance(config, Mapping):
+        return {}
+    return config
+
+
+def profile_uses_identity_center(config: Mapping[str, Any]) -> bool:
     return bool(
         config.get("sso_session")
         or config.get("sso_start_url")
@@ -134,36 +143,38 @@ def profile_uses_identity_center(session: Any) -> bool:
 
 
 def resolve_expected_account(
-    session: Any,
+    config: Mapping[str, Any],
     *,
     environ: Mapping[str, str] | None = None,
 ) -> str | None:
     env = os.environ if environ is None else environ
-    override = (
-        env.get("SMOKE_EXPECTED_ACCOUNT") or env.get("EXPECTED_ACCOUNT") or ""
-    ).strip()
+    override = (env.get("SMOKE_EXPECTED_ACCOUNT") or "").strip()
     if override:
         return override
-    try:
-        configured = session.get_scoped_config().get("sso_account_id")
-    except Exception:  # noqa: BLE001
-        return None
+    configured = config.get("sso_account_id")
     if configured:
         return str(configured).strip() or None
     return None
 
 
-def discover_stack_targets(cloudformation: Any, stack_name: str) -> tuple[str, str]:
+def call_aws_preflight(operation: Any, *, failure_message: str) -> Any:
+    """Run one AWS read and map failures to safe operator messages."""
     try:
-        stack = cloudformation.describe_stacks(StackName=stack_name)["Stacks"][0]
-    except ClientError as exc:
-        code = exc.response.get("Error", {}).get("Code", "")
-        if code in {"ValidationError", "AccessDenied", "AccessDeniedException"}:
-            raise SmokePreflightError("stack unavailable in selected region") from exc
-        raise SmokePreflightError("stack unavailable in selected region") from exc
-    except (BotoCoreError, TokenRetrievalError, UnauthorizedSSOTokenError) as exc:
+        return operation()
+    except (TokenRetrievalError, UnauthorizedSSOTokenError) as exc:
         raise SmokePreflightError("SSO session expired") from exc
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        if code in {"ExpiredToken", "ExpiredTokenException", "RequestExpired"}:
+            raise SmokePreflightError("SSO session expired") from exc
+        raise SmokePreflightError(failure_message) from exc
 
+
+def discover_stack_targets(cloudformation: Any, stack_name: str) -> tuple[str, str]:
+    stack = call_aws_preflight(
+        lambda: cloudformation.describe_stacks(StackName=stack_name)["Stacks"][0],
+        failure_message="stack unavailable in selected region",
+    )
     outputs = {
         item["OutputKey"]: item["OutputValue"] for item in stack.get("Outputs", [])
     }
@@ -171,18 +182,12 @@ def discover_stack_targets(cloudformation: Any, stack_name: str) -> tuple[str, s
     if not bucket:
         raise SmokePreflightError("stack unavailable in selected region")
 
-    try:
-        resources = cloudformation.describe_stack_resources(StackName=stack_name)[
+    resources = call_aws_preflight(
+        lambda: cloudformation.describe_stack_resources(StackName=stack_name)[
             "StackResources"
-        ]
-    except ClientError as exc:
-        code = exc.response.get("Error", {}).get("Code", "")
-        if code in {"AccessDenied", "AccessDeniedException"}:
-            raise SmokePreflightError("missing stack-resource permission") from exc
-        raise SmokePreflightError("missing stack-resource permission") from exc
-    except (BotoCoreError, TokenRetrievalError, UnauthorizedSSOTokenError) as exc:
-        raise SmokePreflightError("SSO session expired") from exc
-
+        ],
+        failure_message="missing stack-resource permission",
+    )
     log_group = next(
         (
             item["PhysicalResourceId"]
@@ -198,23 +203,14 @@ def discover_stack_targets(cloudformation: Any, stack_name: str) -> tuple[str, s
 
 def probe_log_read(logs_client: Any, log_group: str) -> None:
     started_ms = int(time.time() * 1000) - 60_000
-    try:
-        logs_client.filter_log_events(
+    call_aws_preflight(
+        lambda: logs_client.filter_log_events(
             logGroupName=log_group,
             startTime=started_ms,
             limit=1,
-        )
-    except ClientError as exc:
-        code = exc.response.get("Error", {}).get("Code", "")
-        if code in {
-            "AccessDenied",
-            "AccessDeniedException",
-            "ResourceNotFoundException",
-        }:
-            raise SmokePreflightError("missing log-read permission") from exc
-        raise SmokePreflightError("missing log-read permission") from exc
-    except (BotoCoreError, TokenRetrievalError, UnauthorizedSSOTokenError) as exc:
-        raise SmokePreflightError("SSO session expired") from exc
+        ),
+        failure_message="missing log-read permission",
+    )
 
 
 def run_preflight(
@@ -231,22 +227,18 @@ def run_preflight(
     sts = sts_client or session.client("sts")
     cloudformation = cloudformation_client or session.client("cloudformation")
     logs = logs_client or session.client("logs")
+    config = scoped_profile_config(session)
 
-    try:
-        identity = sts.get_caller_identity()
-    except (
-        ClientError,
-        BotoCoreError,
-        TokenRetrievalError,
-        UnauthorizedSSOTokenError,
-    ) as exc:
-        raise SmokePreflightError("SSO session expired") from exc
+    identity = call_aws_preflight(
+        sts.get_caller_identity,
+        failure_message="SSO session expired",
+    )
 
     require_temporary_assumed_role(identity)
-    if require_identity_center and not profile_uses_identity_center(session):
+    if require_identity_center and not profile_uses_identity_center(config):
         raise SmokePreflightError("unsupported long-lived identity")
 
-    expected_account = resolve_expected_account(session, environ=environ)
+    expected_account = resolve_expected_account(config, environ=environ)
     actual_account = str(identity.get("Account", "")).strip()
     if not expected_account or not actual_account or expected_account != actual_account:
         raise SmokePreflightError("expected account mismatch")
@@ -489,7 +481,6 @@ def main(
     session = factory(profile_name=args.profile, region_name=args.region)
     sts = session.client("sts")
     cloudformation = session.client("cloudformation")
-    s3 = session.client("s3")
     logs = session.client("logs")
 
     try:
@@ -508,6 +499,7 @@ def main(
         print(PREFLIGHT_PASSED)
         return 0
 
+    s3 = session.client("s3")
     return run_smoke_matrix(
         s3=s3,
         logs=logs,

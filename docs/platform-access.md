@@ -22,7 +22,7 @@ prerequisite** is externally owned, and **Future hardening** is not active.
 
 ## What to do now
 
-This public example is a reviewer **Sandbox**. Complete and verify these
+This public example is an operator **Sandbox**. Complete and verify these
 boundaries in order:
 
 | Boundary | Owner | Required now | Tighten later |
@@ -33,7 +33,7 @@ boundaries in order:
 | GitHub controls | Repository administrator | PR, `validate`, frozen-plan approvals | Add independent review when a second maintainer exists |
 | Application access | Application owner / this stack | External scoped uploader; stack-managed Lambda role | Revisit only when the application contract changes |
 
-Do not create a control before its reviewer, role, or recovery owner exists.
+Do not create a control before its owner, role, or recovery owner exists.
 Root and long-lived IAM users are not routine maintenance identities.
 
 ## IAM Identity Center
@@ -121,8 +121,8 @@ npx cdk bootstrap aws://<ACCOUNT_ID>/<AWS_REGION> \
   --cloudformation-execution-policies <EXECUTION_POLICY_ARN>
 ```
 
-`make bootstrap PROFILE=<SSO_PROFILE> SANDBOX_ACK=reviewer-owned` is only for an
-external reviewer's own sandbox; it uses CDK defaults.
+`make bootstrap PROFILE=<SSO_PROFILE> SANDBOX_ACK=reviewer-owned` is only for a
+developer's own disposable sandbox; it uses CDK defaults.
 
 Read-only verification:
 
