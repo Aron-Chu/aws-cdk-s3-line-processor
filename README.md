@@ -31,7 +31,7 @@ make check
 These commands install locked dependencies, run pre-commit, execute the test
 suite with coverage, and synthesize CloudFormation without AWS access.
 
-## Where do I go?
+## Table of contents
 
 | Need | Document |
 | --- | --- |
@@ -46,10 +46,3 @@ suite with coverage, and synthesize CloudFormation without AWS access.
 Documentation uses three labels: **Implemented** for verified current behavior,
 **Platform prerequisite** for controls owned outside this stack, and **Future
 hardening** for designs that are not yet implemented.
-
-## Review order
-
-1. Read [the design](docs/design.md).
-2. Inspect `s3_line_processor/stack.py` and `lambda_src/handler.py`.
-3. Review `tests/` and `.github/workflows/`.
-4. Check the dated evidence in [test results](docs/test-results.md).
