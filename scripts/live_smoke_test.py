@@ -16,8 +16,16 @@ from typing import Any
 import boto3
 from botocore.exceptions import (
     ClientError,
+    ConfigNotFound,
+    ConfigParseError,
+    InvalidConfigError,
+    NoCredentialsError,
+    PartialCredentialsError,
+    ProfileNotFound,
+    SSOTokenLoadError,
     TokenRetrievalError,
     UnauthorizedSSOTokenError,
+    UnknownCredentialError,
 )
 
 EXPECTED_LOGS = 9
@@ -38,6 +46,20 @@ DOC_PLACEHOLDER_PROFILES = frozenset(
 PREFLIGHT_PASSED = (
     "Read-only smoke preflight passed. S3 write and version-cleanup "
     "permissions remain unproven until an authorized smoke run."
+)
+SSO_SESSION_EXPIRED = (
+    "SSO session expired. Run `aws sso login --profile <SSO_PROFILE>` and retry."
+)
+AWS_PROFILE_NOT_FOUND = (
+    "AWS profile not found. Configure an Identity Center SSO profile and retry."
+)
+AWS_CONFIG_INVALID = (
+    "Local AWS configuration is invalid or incomplete. "
+    "Fix the SSO profile configuration and retry."
+)
+AWS_CREDENTIALS_MISSING = (
+    "AWS credentials unavailable. "
+    "Run `aws sso login --profile <SSO_PROFILE>` and retry."
 )
 
 
@@ -134,12 +156,13 @@ def scoped_profile_config(session: Any) -> Mapping[str, Any]:
 
 
 def profile_uses_identity_center(config: Mapping[str, Any]) -> bool:
-    return bool(
-        config.get("sso_session")
-        or config.get("sso_start_url")
-        or config.get("sso_account_id")
-        or config.get("sso_role_name")
+    has_account = bool(str(config.get("sso_account_id") or "").strip())
+    has_role = bool(str(config.get("sso_role_name") or "").strip())
+    has_session = bool(
+        str(config.get("sso_session") or "").strip()
+        or str(config.get("sso_start_url") or "").strip()
     )
+    return has_account and has_role and has_session
 
 
 def resolve_expected_account(
@@ -161,13 +184,71 @@ def call_aws_preflight(operation: Any, *, failure_message: str) -> Any:
     """Run one AWS read and map failures to safe operator messages."""
     try:
         return operation()
-    except (TokenRetrievalError, UnauthorizedSSOTokenError) as exc:
-        raise SmokePreflightError("SSO session expired") from exc
+    except (TokenRetrievalError, UnauthorizedSSOTokenError, SSOTokenLoadError) as exc:
+        raise SmokePreflightError(SSO_SESSION_EXPIRED) from exc
     except ClientError as exc:
         code = str(exc.response.get("Error", {}).get("Code", ""))
         if code in {"ExpiredToken", "ExpiredTokenException", "RequestExpired"}:
-            raise SmokePreflightError("SSO session expired") from exc
+            raise SmokePreflightError(SSO_SESSION_EXPIRED) from exc
         raise SmokePreflightError(failure_message) from exc
+
+
+def map_session_setup_error(exc: BaseException) -> SmokePreflightError:
+    if isinstance(exc, ProfileNotFound):
+        return SmokePreflightError(AWS_PROFILE_NOT_FOUND)
+    if isinstance(exc, (ConfigNotFound, ConfigParseError, InvalidConfigError)):
+        return SmokePreflightError(AWS_CONFIG_INVALID)
+    if isinstance(
+        exc,
+        (
+            NoCredentialsError,
+            PartialCredentialsError,
+            UnknownCredentialError,
+        ),
+    ):
+        return SmokePreflightError(AWS_CREDENTIALS_MISSING)
+    if isinstance(
+        exc,
+        (TokenRetrievalError, UnauthorizedSSOTokenError, SSOTokenLoadError),
+    ):
+        return SmokePreflightError(SSO_SESSION_EXPIRED)
+    if isinstance(exc, SmokePreflightError):
+        return exc
+    raise exc
+
+
+SESSION_SETUP_ERRORS = (
+    ProfileNotFound,
+    ConfigNotFound,
+    ConfigParseError,
+    InvalidConfigError,
+    NoCredentialsError,
+    PartialCredentialsError,
+    UnknownCredentialError,
+    TokenRetrievalError,
+    UnauthorizedSSOTokenError,
+    SSOTokenLoadError,
+)
+
+
+def open_smoke_session(
+    session_factory: Any,
+    *,
+    profile: str | None,
+    region: str,
+) -> Any:
+    """Create a boto3 session with operator-friendly setup errors."""
+    try:
+        return session_factory(profile_name=profile, region_name=region)
+    except SESSION_SETUP_ERRORS as exc:
+        raise map_session_setup_error(exc) from exc
+
+
+def open_service_client(session: Any, service_name: str) -> Any:
+    try:
+        return session.client(service_name)
+    except SESSION_SETUP_ERRORS as exc:
+        raise map_session_setup_error(exc) from exc
 
 
 def discover_stack_targets(cloudformation: Any, stack_name: str) -> tuple[str, str]:
@@ -231,7 +312,7 @@ def run_preflight(
 
     identity = call_aws_preflight(
         sts.get_caller_identity,
-        failure_message="SSO session expired",
+        failure_message=SSO_SESSION_EXPIRED,
     )
 
     require_temporary_assumed_role(identity)
@@ -282,6 +363,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def cleanup_created_versions(
+    s3: Any,
+    bucket: str,
+    versions: list[tuple[str, str]],
+) -> int:
+    """Delete exact recorded versions; continue after individual failures."""
+    failures = 0
+    for key, version_id in versions:
+        try:
+            s3.delete_object(Bucket=bucket, Key=key, VersionId=version_id)
+        except ClientError:
+            failures += 1
+    return failures
+
+
 def run_smoke_matrix(
     *,
     s3: Any,
@@ -296,6 +392,7 @@ def run_smoke_matrix(
     field_sentinel = f"DO_NOT_LOG_FIELD_{run_id}"
     sentinel = f"DO_NOT_LOG_{run_id}"
     started_ms = int(time.time() * 1000) - 5_000
+    print(f"Created prefix: {prefix}")
 
     cases = [
         (
@@ -314,152 +411,169 @@ def run_smoke_matrix(
     expected: dict[str, tuple[str, str]] = {}
     versions: list[tuple[str, str]] = []
     etags: list[str] = []
-    for name, body, outcome in cases:
-        key = prefix + name
-        response = s3.put_object(Bucket=bucket, Key=key, Body=body)
-        version_id = response["VersionId"]
-        etags.append(response["ETag"].strip('"'))
-        expected[object_reference(bucket, key, version_id)] = (key, outcome)
-        versions.append((key, version_id))
-
     ignored_key = prefix + "test.txt"
-    response = s3.put_object(Bucket=bucket, Key=ignored_key, Body=b"ignored")
-    ignored_version = response["VersionId"]
-    etags.append(response["ETag"].strip('"'))
-    ignored_ref = object_reference(bucket, ignored_key, ignored_version)
-    versions.append((ignored_key, ignored_version))
+    ignored_ref = ""
+    rapid_valid_ref = ""
+    rapid_invalid_ref = ""
+    smoke_exit = 1
+    cleanup_failed = False
 
-    rapid_key = prefix + "rapid.json"
-    rapid_valid_response = s3.put_object(
-        Bucket=bucket, Key=rapid_key, Body=b'{"generation":1}'
-    )
-    rapid_invalid_response = s3.put_object(
-        Bucket=bucket, Key=rapid_key, Body=b'{"generation":2,"broken":}'
-    )
-    rapid_valid = rapid_valid_response["VersionId"]
-    rapid_invalid = rapid_invalid_response["VersionId"]
-    etags.extend(
-        [
-            rapid_valid_response["ETag"].strip('"'),
-            rapid_invalid_response["ETag"].strip('"'),
-        ]
-    )
-    versions.extend([(rapid_key, rapid_valid), (rapid_key, rapid_invalid)])
-    rapid_valid_ref = object_reference(bucket, rapid_key, rapid_valid)
-    rapid_invalid_ref = object_reference(bucket, rapid_key, rapid_invalid)
-    run_object_refs = set(expected) | {
-        ignored_ref,
-        rapid_valid_ref,
-        rapid_invalid_ref,
-    }
+    try:
+        for name, body, outcome in cases:
+            key = prefix + name
+            response = s3.put_object(Bucket=bucket, Key=key, Body=body)
+            version_id = response["VersionId"]
+            versions.append((key, version_id))
+            etags.append(response["ETag"].strip('"'))
+            expected[object_reference(bucket, key, version_id)] = (key, outcome)
 
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        _, records = collect_run_logs(logs, log_group, started_ms, run_object_refs)
-        observed_refs = {
-            record.get("object_ref")
-            for record in records
-            if isinstance(record.get("object_ref"), str)
-        }
-        if set(expected).issubset(observed_refs) and {
+        response = s3.put_object(Bucket=bucket, Key=ignored_key, Body=b"ignored")
+        ignored_version = response["VersionId"]
+        versions.append((ignored_key, ignored_version))
+        etags.append(response["ETag"].strip('"'))
+        ignored_ref = object_reference(bucket, ignored_key, ignored_version)
+
+        rapid_key = prefix + "rapid.json"
+        rapid_valid_response = s3.put_object(
+            Bucket=bucket, Key=rapid_key, Body=b'{"generation":1}'
+        )
+        rapid_valid = rapid_valid_response["VersionId"]
+        versions.append((rapid_key, rapid_valid))
+        etags.append(rapid_valid_response["ETag"].strip('"'))
+
+        rapid_invalid_response = s3.put_object(
+            Bucket=bucket, Key=rapid_key, Body=b'{"generation":2,"broken":}'
+        )
+        rapid_invalid = rapid_invalid_response["VersionId"]
+        versions.append((rapid_key, rapid_invalid))
+        etags.append(rapid_invalid_response["ETag"].strip('"'))
+
+        rapid_valid_ref = object_reference(bucket, rapid_key, rapid_valid)
+        rapid_invalid_ref = object_reference(bucket, rapid_key, rapid_invalid)
+        run_object_refs = set(expected) | {
+            ignored_ref,
             rapid_valid_ref,
             rapid_invalid_ref,
-        }.issubset(observed_refs):
-            time.sleep(5)
-            break
-        time.sleep(3)
+        }
 
-    raw_messages, records = collect_run_logs(
-        logs, log_group, started_ms, run_object_refs
-    )
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            _, records = collect_run_logs(logs, log_group, started_ms, run_object_refs)
+            observed_refs = {
+                record.get("object_ref")
+                for record in records
+                if isinstance(record.get("object_ref"), str)
+            }
+            if set(expected).issubset(observed_refs) and {
+                rapid_valid_ref,
+                rapid_invalid_ref,
+            }.issubset(observed_refs):
+                time.sleep(5)
+                break
+            time.sleep(3)
 
-    by_ref: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for record in records:
-        object_ref = record.get("object_ref")
-        if isinstance(object_ref, str):
-            by_ref[object_ref].append(record)
-
-    failures: list[str] = []
-    results: list[tuple[str, str, str]] = []
-    for object_ref, (key, outcome) in expected.items():
-        matching = by_ref.get(object_ref, [])
-        actual = "missing"
-        observed = {outcome_for(record) for record in matching}
-        if len(observed) == 1:
-            actual = observed.pop()
-        if actual != outcome:
-            failures.append(f"{key}: expected {outcome}, got {actual}")
-        results.append((key.removeprefix(prefix), outcome, actual))
-
-    filter_actual = f"{len(by_ref.get(ignored_ref, []))} invocations"
-    if by_ref.get(ignored_ref):
-        failures.append(f"{ignored_key}: notification filter failed")
-    results.append(("test.txt", "0 invocations", filter_actual))
-
-    rapid_by_ref = {
-        record.get("object_ref"): outcome_for(record)
-        for record in records
-        if record.get("object_ref") in {rapid_valid_ref, rapid_invalid_ref}
-    }
-    rapid_actual = (
-        f"{rapid_by_ref.get(rapid_valid_ref)}, {rapid_by_ref.get(rapid_invalid_ref)}"
-    )
-    if rapid_actual != "processed, invalid_json":
-        failures.append(f"rapid overwrite: got {rapid_actual}")
-    results.append(("rapid overwrite", "processed, invalid_json", rapid_actual))
-
-    joined_logs = "\n".join(raw_messages)
-    if sentinel in joined_logs or field_sentinel in joined_logs:
-        failures.append("uploaded payload value or field name appeared in logs")
-    raw_identity_logged = bucket in joined_logs or any(
-        key in joined_logs for key, _version_id in versions
-    )
-    if raw_identity_logged:
-        failures.append("raw bucket name or object key appeared in logs")
-    etag_logged = any(etag in joined_logs for etag in etags)
-    if etag_logged:
-        failures.append("S3 ETag fingerprint appeared in logs")
-    context_valid = True
-    missing_context = 0
-    for record in records:
-        if any(
-            record.get(field) != expected_value
-            for field, expected_value in EXPECTED_LOG_CONTEXT.items()
-        ):
-            context_valid = False
-            missing_context += 1
-    if missing_context:
-        failures.append(
-            f"{missing_context}/{len(records)} log records missing "
-            f"{', '.join(EXPECTED_LOG_CONTEXT)} — deployed Lambda likely predates "
-            "the logging contract; redeploy from main and rerun smoke"
+        raw_messages, records = collect_run_logs(
+            logs, log_group, started_ms, run_object_refs
         )
 
-    print("| Case | Expected | Actual |")
-    print("| --- | --- | --- |")
-    for name, expected_result, actual in results:
-        print(f"| {name} | `{expected_result}` | `{actual}` |")
-    payload_logged = sentinel in joined_logs or field_sentinel in joined_logs
-    print(f"\nPayload value or field name logged: {payload_logged}")
-    print(f"Raw bucket name or object key logged: {raw_identity_logged}")
-    print(f"S3 ETag fingerprint logged: {etag_logged}")
-    print(f"Standard log context valid: {context_valid}")
-    print(f"Observed logs: {len(records)}/{EXPECTED_LOGS}")
-    print(f"Created prefix: {prefix}")
+        by_ref: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for record in records:
+            object_ref = record.get("object_ref")
+            if isinstance(object_ref, str):
+                by_ref[object_ref].append(record)
 
-    if cleanup:
-        for key, version_id in versions:
-            s3.delete_object(Bucket=bucket, Key=key, VersionId=version_id)
-        print("Created object versions deleted.")
+        failures: list[str] = []
+        results: list[tuple[str, str, str]] = []
+        for object_ref, (key, outcome) in expected.items():
+            matching = by_ref.get(object_ref, [])
+            actual = "missing"
+            observed = {outcome_for(record) for record in matching}
+            if len(observed) == 1:
+                actual = observed.pop()
+            if actual != outcome:
+                failures.append(f"{key}: expected {outcome}, got {actual}")
+            results.append((key.removeprefix(prefix), outcome, actual))
 
-    if failures:
-        print("\nFailures:")
-        for failure in failures:
-            print(f"- {failure}")
+        filter_actual = f"{len(by_ref.get(ignored_ref, []))} invocations"
+        if by_ref.get(ignored_ref):
+            failures.append(f"{ignored_key}: notification filter failed")
+        results.append(("test.txt", "0 invocations", filter_actual))
+
+        rapid_by_ref = {
+            record.get("object_ref"): outcome_for(record)
+            for record in records
+            if record.get("object_ref") in {rapid_valid_ref, rapid_invalid_ref}
+        }
+        rapid_actual = (
+            f"{rapid_by_ref.get(rapid_valid_ref)}, "
+            f"{rapid_by_ref.get(rapid_invalid_ref)}"
+        )
+        if rapid_actual != "processed, invalid_json":
+            failures.append(f"rapid overwrite: got {rapid_actual}")
+        results.append(("rapid overwrite", "processed, invalid_json", rapid_actual))
+
+        joined_logs = "\n".join(raw_messages)
+        if sentinel in joined_logs or field_sentinel in joined_logs:
+            failures.append("uploaded payload value or field name appeared in logs")
+        raw_identity_logged = bucket in joined_logs or any(
+            key in joined_logs for key, _version_id in versions
+        )
+        if raw_identity_logged:
+            failures.append("raw bucket name or object key appeared in logs")
+        etag_logged = any(etag in joined_logs for etag in etags)
+        if etag_logged:
+            failures.append("S3 ETag fingerprint appeared in logs")
+        context_valid = True
+        missing_context = 0
+        for record in records:
+            if any(
+                record.get(field) != expected_value
+                for field, expected_value in EXPECTED_LOG_CONTEXT.items()
+            ):
+                context_valid = False
+                missing_context += 1
+        if missing_context:
+            failures.append(
+                f"{missing_context}/{len(records)} log records missing "
+                f"{', '.join(EXPECTED_LOG_CONTEXT)} — deployed Lambda likely "
+                "predates the logging contract; redeploy from main and rerun smoke"
+            )
+
+        print("| Case | Expected | Actual |")
+        print("| --- | --- | --- |")
+        for name, expected_result, actual in results:
+            print(f"| {name} | `{expected_result}` | `{actual}` |")
+        payload_logged = sentinel in joined_logs or field_sentinel in joined_logs
+        print(f"\nPayload value or field name logged: {payload_logged}")
+        print(f"Raw bucket name or object key logged: {raw_identity_logged}")
+        print(f"S3 ETag fingerprint logged: {etag_logged}")
+        print(f"Standard log context valid: {context_valid}")
+        print(f"Observed logs: {len(records)}/{EXPECTED_LOGS}")
+
+        if failures:
+            print("\nFailures:")
+            for failure in failures:
+                print(f"- {failure}")
+            smoke_exit = 1
+        else:
+            print("\nSmoke matrix passed.")
+            smoke_exit = 0
+    finally:
+        if cleanup and versions:
+            failed_deletes = cleanup_created_versions(s3, bucket, versions)
+            if failed_deletes:
+                cleanup_failed = True
+                print(
+                    f"Version cleanup failed for {failed_deletes} object version(s). "
+                    "Delete only the reported prefix versions manually.",
+                    file=sys.stderr,
+                )
+            else:
+                print("Created object versions deleted.")
+
+    if cleanup_failed:
         return 1
-
-    print("\nSmoke matrix passed.")
-    return 0
+    return smoke_exit
 
 
 def main(
@@ -478,12 +592,15 @@ def main(
         return 2
 
     factory = session_factory or boto3.Session
-    session = factory(profile_name=args.profile, region_name=args.region)
-    sts = session.client("sts")
-    cloudformation = session.client("cloudformation")
-    logs = session.client("logs")
-
     try:
+        session = open_smoke_session(
+            factory,
+            profile=args.profile,
+            region=args.region,
+        )
+        sts = open_service_client(session, "sts")
+        cloudformation = open_service_client(session, "cloudformation")
+        logs = open_service_client(session, "logs")
         bucket, log_group = run_preflight(
             session,
             stack_name=args.stack,
@@ -499,7 +616,12 @@ def main(
         print(PREFLIGHT_PASSED)
         return 0
 
-    s3 = session.client("s3")
+    try:
+        s3 = open_service_client(session, "s3")
+    except SmokePreflightError as exc:
+        print(exc.message, file=sys.stderr)
+        return 1
+
     return run_smoke_matrix(
         s3=s3,
         logs=logs,

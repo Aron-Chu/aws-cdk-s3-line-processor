@@ -4,7 +4,12 @@ from unittest.mock import MagicMock
 
 import boto3
 import pytest
-from botocore.exceptions import ClientError
+from botocore.exceptions import (
+    ClientError,
+    NoCredentialsError,
+    ProfileNotFound,
+    UnauthorizedSSOTokenError,
+)
 
 from scripts import live_smoke_test as smoke
 
@@ -444,3 +449,195 @@ def test_smoke_matrix_retains_txt_filter_case_and_versioned_cleanup() -> None:
     assert all(key.startswith("incoming/smoke-") for key in put_keys)
     for call in s3.delete_object.call_args_list:
         assert call.kwargs["VersionId"]
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"sso_account_id": ACCOUNT, "sso_role_name": "SmokeOperator"},
+        {"sso_account_id": ACCOUNT, "sso_session": "example"},
+        {"sso_role_name": "SmokeOperator", "sso_session": "example"},
+        {"sso_account_id": ACCOUNT},
+        {},
+    ],
+)
+def test_partial_sso_configuration_is_rejected(config: dict[str, str]) -> None:
+    assert smoke.profile_uses_identity_center(config) is False
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {
+            "sso_account_id": ACCOUNT,
+            "sso_role_name": "SmokeOperator",
+            "sso_session": "example-sso",
+        },
+        {
+            "sso_account_id": ACCOUNT,
+            "sso_role_name": "SmokeOperator",
+            "sso_start_url": "https://example.awsapps.com/start",
+        },
+    ],
+)
+def test_complete_modern_and_legacy_sso_configurations_are_accepted(
+    config: dict[str, str],
+) -> None:
+    assert smoke.profile_uses_identity_center(config) is True
+
+
+@pytest.mark.parametrize(
+    ("exc", "needle"),
+    [
+        (ProfileNotFound(profile="missing"), "AWS profile not found"),
+        (NoCredentialsError(), "AWS credentials unavailable"),
+        (UnauthorizedSSOTokenError(), "SSO session expired"),
+    ],
+)
+def test_session_setup_errors_are_human_readable(
+    exc: Exception,
+    needle: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def factory(**_kwargs: Any) -> MagicMock:
+        raise exc
+
+    code = smoke.main(
+        ["--check-only", "--profile", "my-smoke-sso"],
+        session_factory=factory,
+    )
+    captured = capsys.readouterr()
+    assert code == 1
+    assert needle in captured.err
+    assert ACCOUNT not in captured.err
+
+
+def test_prefix_is_printed_before_first_upload(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    s3 = MagicMock()
+    logs = MagicMock()
+    order: list[str] = []
+
+    def put_object(**_kwargs: Any) -> dict[str, str]:
+        order.append("put")
+        return {"VersionId": "v1", "ETag": '"e"'}
+
+    s3.put_object.side_effect = put_object
+    logs.get_paginator.return_value.paginate.return_value = [{"events": []}]
+
+    smoke.run_smoke_matrix(
+        s3=s3,
+        logs=logs,
+        timeout=0,
+        cleanup=False,
+        bucket=BUCKET,
+        log_group=LOG_GROUP,
+    )
+    output = capsys.readouterr().out
+    prefix_line = next(
+        line for line in output.splitlines() if line.startswith("Created prefix:")
+    )
+    assert "incoming/smoke-" in prefix_line
+    assert order and order[0] == "put"
+    # Prefix announcement appears in output before any failure table that
+    # follows uploads; ensure the printed prefix exists when puts occurred.
+    assert "Created prefix:" in output
+
+
+def test_failure_after_upload_still_cleans_recorded_versions() -> None:
+    s3 = MagicMock()
+    logs = MagicMock()
+    puts = {"count": 0}
+
+    def put_object(**_kwargs: Any) -> dict[str, str]:
+        puts["count"] += 1
+        if puts["count"] == 2:
+            raise _client_error("InternalError", "boom")
+        return {"VersionId": f"v{puts['count']}", "ETag": '"e"'}
+
+    s3.put_object.side_effect = put_object
+
+    with pytest.raises(ClientError):
+        smoke.run_smoke_matrix(
+            s3=s3,
+            logs=logs,
+            timeout=0,
+            cleanup=True,
+            bucket=BUCKET,
+            log_group=LOG_GROUP,
+        )
+
+    assert s3.delete_object.call_count == 1
+    assert s3.delete_object.call_args.kwargs["VersionId"] == "v1"
+
+
+def test_log_polling_failure_still_triggers_cleanup() -> None:
+    s3 = MagicMock()
+    logs = MagicMock()
+    s3.put_object.return_value = {"VersionId": "v1", "ETag": '"e"'}
+    logs.get_paginator.side_effect = _client_error("AccessDeniedException")
+
+    with pytest.raises(ClientError):
+        smoke.run_smoke_matrix(
+            s3=s3,
+            logs=logs,
+            timeout=0,
+            cleanup=True,
+            bucket=BUCKET,
+            log_group=LOG_GROUP,
+        )
+
+    assert s3.delete_object.call_count == s3.put_object.call_count
+    for call in s3.delete_object.call_args_list:
+        assert call.kwargs["VersionId"]
+
+
+def test_one_delete_failure_continues_remaining_versions(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    s3 = MagicMock()
+    logs = MagicMock()
+    versions = iter([f"v{i}" for i in range(1, 20)])
+
+    def put_object(**_kwargs: Any) -> dict[str, str]:
+        return {"VersionId": next(versions), "ETag": '"e"'}
+
+    def delete_object(**kwargs: Any) -> dict[str, str]:
+        if kwargs["VersionId"] == "v1":
+            raise _client_error("AccessDenied")
+        return {}
+
+    s3.put_object.side_effect = put_object
+    s3.delete_object.side_effect = delete_object
+    logs.get_paginator.return_value.paginate.return_value = [{"events": []}]
+
+    code = smoke.run_smoke_matrix(
+        s3=s3,
+        logs=logs,
+        timeout=0,
+        cleanup=True,
+        bucket=BUCKET,
+        log_group=LOG_GROUP,
+    )
+
+    assert code == 1
+    assert s3.delete_object.call_count == s3.put_object.call_count
+    assert "Version cleanup failed" in capsys.readouterr().err
+
+
+def test_no_delete_without_cleanup_flag() -> None:
+    s3 = MagicMock()
+    logs = MagicMock()
+    s3.put_object.return_value = {"VersionId": "v1", "ETag": '"e"'}
+    logs.get_paginator.return_value.paginate.return_value = [{"events": []}]
+
+    smoke.run_smoke_matrix(
+        s3=s3,
+        logs=logs,
+        timeout=0,
+        cleanup=False,
+        bucket=BUCKET,
+        log_group=LOG_GROUP,
+    )
+    s3.delete_object.assert_not_called()

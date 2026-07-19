@@ -164,9 +164,10 @@ make smoke PROFILE=<SMOKE_SSO_PROFILE> REGION=<AWS_REGION>
 ```
 
 `make smoke-check` is read-only and does **not** prove S3 write or
-version-cleanup permissions. `make smoke` runs the same preflight, then uploads
-under `incoming/smoke-*/*` and deletes only the exact versions it created.
-The five-action permission contract is owned by
+version-cleanup permissions. `make smoke` runs the same preflight, prints the
+randomized `incoming/smoke-*` prefix before uploads, then uploads under that
+prefix and deletes only the exact versions it created—even if a later step
+fails. The five-action permission contract is owned by
 [platform access](platform-access.md#smoke-operator-permission-contract).
 
 **Expected result:** Nine application outcomes; sensitive values absent from
@@ -175,8 +176,8 @@ logs; created versions removed.
 **Common failure:** Expired SSO, wrong stack/region, or a missing platform
 permission set. Do not grant broad access to unblock `smoke-check`.
 
-**Stop condition:** If cleanup fails, remove only the reported version IDs. Do
-not empty the bucket.
+**Stop condition:** If cleanup fails, use the printed prefix and remove only
+those exact version IDs. Do not empty the bucket.
 
 ## Safe observation
 
