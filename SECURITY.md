@@ -2,17 +2,17 @@
 
 ## Purpose
 
-Provide a safe path for reporting vulnerabilities in this public example.
+Private reporting path for vulnerabilities in this public example.
 
 ## Who should use this
 
 Anyone who finds a vulnerability in the application, CDK stack, dependencies,
-GitHub workflows, or documented security process.
+workflows, or documented security process.
 
 ## What this does not do
 
-This policy does not authorize testing against AWS accounts or resources you do
-not own, and it does not provide an operational support SLA.
+Does not authorize testing accounts or resources you do not own, and provides
+no operational support SLA.
 
 ## Supported scope
 

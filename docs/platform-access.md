@@ -2,8 +2,8 @@
 
 ## Purpose
 
-Define the AWS account and GitHub controls required before this repository can
-deploy or operate safely.
+AWS account and GitHub controls required before this repository can deploy or
+operate safely.
 
 ## Who should use this
 
@@ -13,16 +13,13 @@ AWS account owners and GitHub administrators. Contributors use
 
 ## What this does not do
 
-This guide does not authorize an agent or contributor to create identities,
-bootstrap an account, change GitHub settings, or deploy. The application stack
-does not create administrators, human access, GitHub OIDC, or bootstrap roles.
-
-Labels used below: **Implemented** is repository behavior, **Platform
-prerequisite** is externally owned, and **Future hardening** is not active.
+Does not authorize creating identities, bootstrapping, changing GitHub
+settings, or deploying. This application stack does not create administrators,
+human access, OIDC, or bootstrap roles.
 
 ## What to do now
 
-This public example is a reviewer **Sandbox**. Complete and verify these
+This public example is an operator **Sandbox**. Complete and verify these
 boundaries in order:
 
 | Boundary | Owner | Required now | Tighten later |
@@ -33,7 +30,7 @@ boundaries in order:
 | GitHub controls | Repository administrator | PR, `validate`, frozen-plan approvals | Add independent review when a second maintainer exists |
 | Application access | Application owner / this stack | External scoped uploader; stack-managed Lambda role | Revisit only when the application contract changes |
 
-Do not create a control before its reviewer, role, or recovery owner exists.
+Do not create a control before its owner, role, or recovery owner exists.
 Root and long-lived IAM users are not routine maintenance identities.
 
 ## IAM Identity Center
@@ -47,7 +44,29 @@ Use the current
 | --- | --- |
 | Platform administrator | Time-limited Identity Center, OIDC, bootstrap, and access administration |
 | Read-only auditor | Inspect stack, IAM trust, bootstrap, CloudTrail, and integration settings |
-| Smoke operator | Describe this stack, read its logs, upload smoke objects, and delete only smoke-created versions |
+| Smoke operator | Five-action contract below; no deploy or bootstrap |
+
+### Smoke Operator permission contract
+
+**Platform prerequisite:** Provision a short-session Identity Center permission
+set assigned through a group. Resolve the live log-group physical ID privately
+from the application stack when building the set; never copy physical names,
+ARNs, or account IDs into public documentation.
+
+| Action | Resource scope (placeholders) |
+| --- | --- |
+| `cloudformation:DescribeStacks` | Exact application stack |
+| `cloudformation:DescribeStackResources` | Exact application stack |
+| `logs:FilterLogEvents` | Exact application log group |
+| `s3:PutObject` | `<BUCKET_ARN>/incoming/smoke-*/*` |
+| `s3:DeleteObjectVersion` | `<BUCKET_ARN>/incoming/smoke-*/*` |
+
+Include non-`.json` keys under the smoke prefix (the matrix uploads `test.txt`).
+Do not grant deploy, bootstrap, IAM, Lambda, SSM, S3 list/read, broad
+`incoming/*` cleanup, `s3:DeleteObject` without version IDs, or CloudFormation
+mutation. Disable any legacy long-lived IAM-user smoke credentials only after
+an authorized Identity Center `make smoke` run succeeds and ownership is
+confirmed.
 
 ### Configure and verify a profile
 
@@ -99,8 +118,8 @@ npx cdk bootstrap aws://<ACCOUNT_ID>/<AWS_REGION> \
   --cloudformation-execution-policies <EXECUTION_POLICY_ARN>
 ```
 
-`make bootstrap PROFILE=<SSO_PROFILE> SANDBOX_ACK=reviewer-owned` is only for an
-external reviewer's own sandbox; it uses CDK defaults.
+`make bootstrap PROFILE=<SSO_PROFILE> SANDBOX_ACK=reviewer-owned` is only for a
+developer's own disposable sandbox; it uses CDK defaults.
 
 Read-only verification:
 

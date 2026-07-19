@@ -2,18 +2,17 @@
 
 ## Purpose
 
-Define the stable runtime, security, networking, failure, and retention contract
-for the S3 line processor.
+Stable runtime, security, networking, failure, and retention contract for the
+S3 line processor.
 
 ## Who should use this
 
-Reviewers and contributors evaluating application or infrastructure behavior.
+Contributors and maintainers evaluating application or infrastructure behavior.
 
 ## What this does not do
 
-This document does not grant access or provide deployment commands. Use
-[platform access](platform-access.md) for account prerequisites and
-[operations](operations.md) for routine procedures.
+Does not grant access or deployment commands—see
+[platform access](platform-access.md) and [operations](operations.md).
 
 ## System in one minute
 

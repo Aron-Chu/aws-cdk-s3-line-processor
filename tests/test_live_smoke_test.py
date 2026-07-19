@@ -1,9 +1,120 @@
 import json
+from typing import Any
 from unittest.mock import MagicMock
 
+import boto3
 import pytest
+from botocore.exceptions import (
+    ClientError,
+    NoCredentialsError,
+    ProfileNotFound,
+    UnauthorizedSSOTokenError,
+)
 
 from scripts import live_smoke_test as smoke
+
+ACCOUNT = "111122223333"
+OTHER_ACCOUNT = "999988887777"
+ROLE_ARN = f"arn:aws:sts::{ACCOUNT}:assumed-role/SmokeOperator/session"
+USER_ARN = f"arn:aws:iam::{ACCOUNT}:user/legacy-operator"
+ROOT_ARN = f"arn:aws:iam::{ACCOUNT}:root"
+BUCKET = "example-bucket"
+LOG_GROUP = "/aws/lambda/example"
+
+
+def _client_error(code: str, message: str = "denied") -> ClientError:
+    return ClientError(
+        {"Error": {"Code": code, "Message": message}},
+        "Operation",
+    )
+
+
+def _sso_session(
+    *,
+    account: str = ACCOUNT,
+    sso_account_id: str | None = ACCOUNT,
+) -> MagicMock:
+    """Mirror real boto3.Session: scoped config lives on `_session` only."""
+    session = MagicMock(spec=["_session", "client"])
+    config: dict[str, str] = {
+        "sso_session": "example-sso",
+        "sso_role_name": "SmokeOperator",
+    }
+    if sso_account_id is not None:
+        config["sso_account_id"] = sso_account_id
+    botocore_session = MagicMock(spec=["get_scoped_config"])
+    botocore_session.get_scoped_config.return_value = config
+    session._session = botocore_session
+
+    sts = MagicMock()
+    sts.get_caller_identity.return_value = {
+        "Account": account,
+        "Arn": ROLE_ARN,
+        "UserId": "AIDACKCEVSQ6C2EXAMPLE:session",
+    }
+    cloudformation = MagicMock()
+    cloudformation.describe_stacks.return_value = {
+        "Stacks": [
+            {
+                "Outputs": [
+                    {"OutputKey": "InputBucketName", "OutputValue": BUCKET},
+                    {
+                        "OutputKey": "ProcessorFunctionName",
+                        "OutputValue": "example-fn",
+                    },
+                ]
+            }
+        ]
+    }
+    cloudformation.describe_stack_resources.return_value = {
+        "StackResources": [
+            {
+                "ResourceType": "AWS::Logs::LogGroup",
+                "PhysicalResourceId": LOG_GROUP,
+            }
+        ]
+    }
+    logs = MagicMock()
+    logs.filter_log_events.return_value = {"events": []}
+    s3 = MagicMock()
+
+    def client(service_name: str, **_kwargs: Any) -> MagicMock:
+        return {
+            "sts": sts,
+            "cloudformation": cloudformation,
+            "logs": logs,
+            "s3": s3,
+        }[service_name]
+
+    session.client.side_effect = client
+    session._sts = sts
+    session._cloudformation = cloudformation
+    session._logs = logs
+    session._s3 = s3
+    return session
+
+
+def test_real_boto3_session_has_no_direct_get_scoped_config() -> None:
+    session = boto3.Session()
+    assert not hasattr(session, "get_scoped_config")
+    assert hasattr(session._session, "get_scoped_config")
+
+
+def test_scoped_profile_config_reads_botocore_session_only() -> None:
+    session = MagicMock(spec=["_session", "client"])
+    botocore_session = MagicMock(spec=["get_scoped_config"])
+    botocore_session.get_scoped_config.return_value = {
+        "sso_account_id": ACCOUNT,
+        "sso_role_name": "SmokeOperator",
+    }
+    session._session = botocore_session
+
+    config = smoke.scoped_profile_config(session)
+
+    assert config["sso_account_id"] == ACCOUNT
+    botocore_session.get_scoped_config.assert_called_once_with()
+    with pytest.raises(AttributeError):
+        session.get_scoped_config()
 
 
 def test_parse_log_reads_direct_json_message() -> None:
@@ -102,13 +213,476 @@ def test_validate_profile_rejects_documentation_placeholders(
 
 def test_validate_profile_allows_real_names_and_none() -> None:
     smoke.validate_profile(None)
-    smoke.validate_profile("s3-line-processor-operator")
+    smoke.validate_profile("my-smoke-sso")
 
 
-def test_build_parser_accepts_cleanup_flag() -> None:
+def test_build_parser_accepts_check_only_and_cleanup() -> None:
     args = smoke.build_parser().parse_args(
-        ["--profile", "s3-line-processor-operator", "--cleanup"]
+        ["--profile", "my-smoke-sso", "--cleanup", "--check-only"]
     )
-    assert args.profile == "s3-line-processor-operator"
+    assert args.profile == "my-smoke-sso"
     assert args.cleanup is True
+    assert args.check_only is True
     assert args.stack == "S3LineProcessorStack"
+
+
+def test_require_temporary_assumed_role_rejects_user_and_root() -> None:
+    smoke.require_temporary_assumed_role({"Arn": ROLE_ARN})
+    with pytest.raises(
+        smoke.SmokePreflightError, match="unsupported long-lived identity"
+    ):
+        smoke.require_temporary_assumed_role({"Arn": USER_ARN})
+    with pytest.raises(
+        smoke.SmokePreflightError, match="unsupported long-lived identity"
+    ):
+        smoke.require_temporary_assumed_role({"Arn": ROOT_ARN})
+
+
+def test_check_only_accepts_identity_center_assumed_role(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    session = _sso_session()
+
+    code = smoke.main(
+        ["--check-only", "--profile", "my-smoke-sso", "--region", "us-west-2"],
+        session_factory=lambda **_: session,
+    )
+
+    assert code == 0
+    assert smoke.PREFLIGHT_PASSED in capsys.readouterr().out
+    assert "s3" not in [call.args[0] for call in session.client.call_args_list]
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message", "hide"),
+    [
+        (
+            lambda session: setattr(
+                session._sts,
+                "get_caller_identity",
+                MagicMock(return_value={"Account": ACCOUNT, "Arn": USER_ARN}),
+            ),
+            "unsupported long-lived identity",
+            (ACCOUNT, USER_ARN),
+        ),
+        (
+            lambda session: setattr(
+                session._sts,
+                "get_caller_identity",
+                MagicMock(return_value={"Account": ACCOUNT, "Arn": ROOT_ARN}),
+            ),
+            "unsupported long-lived identity",
+            (ACCOUNT, ROOT_ARN),
+        ),
+        (
+            lambda session: setattr(
+                session._sts,
+                "get_caller_identity",
+                MagicMock(side_effect=_client_error("ExpiredToken", "expired")),
+            ),
+            "SSO session expired",
+            (),
+        ),
+        (
+            lambda session: setattr(
+                session._session.get_scoped_config,
+                "return_value",
+                {
+                    "sso_session": "example-sso",
+                    "sso_role_name": "SmokeOperator",
+                    "sso_account_id": OTHER_ACCOUNT,
+                },
+            ),
+            "expected account mismatch",
+            (ACCOUNT, OTHER_ACCOUNT),
+        ),
+        (
+            lambda session: setattr(
+                session._cloudformation,
+                "describe_stack_resources",
+                MagicMock(side_effect=_client_error("AccessDenied")),
+            ),
+            "missing stack-resource permission",
+            (),
+        ),
+        (
+            lambda session: setattr(
+                session._logs,
+                "filter_log_events",
+                MagicMock(side_effect=_client_error("AccessDeniedException")),
+            ),
+            "missing log-read permission",
+            (),
+        ),
+    ],
+)
+def test_check_only_fail_closed_cases(
+    mutate: Any,
+    message: str,
+    hide: tuple[str, ...],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    session = _sso_session()
+    mutate(session)
+
+    code = smoke.main(
+        ["--check-only", "--profile", "my-smoke-sso"],
+        session_factory=lambda **_: session,
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert message in captured.err
+    for secret in hide:
+        assert secret not in captured.err
+        assert secret not in captured.out
+    assert "s3" not in [call.args[0] for call in session.client.call_args_list]
+
+
+def test_check_only_constructs_no_s3_client_and_no_mutations() -> None:
+    session = _sso_session()
+    smoke.main(
+        ["--check-only", "--profile", "my-smoke-sso"],
+        session_factory=lambda **_: session,
+    )
+
+    services = [call.args[0] for call in session.client.call_args_list]
+    assert services == ["sts", "cloudformation", "logs"]
+    session._s3.put_object.assert_not_called()
+    session._s3.delete_object.assert_not_called()
+    assert session._cloudformation.execute_change_set.call_count == 0
+
+
+def test_normal_smoke_runs_preflight_before_first_upload() -> None:
+    session = _sso_session()
+    call_order: list[str] = []
+
+    def track_identity() -> dict[str, str]:
+        call_order.append("sts")
+        return {"Account": ACCOUNT, "Arn": ROLE_ARN}
+
+    def track_describe_stacks(**_kwargs: Any) -> dict[str, Any]:
+        call_order.append("describe_stacks")
+        return {
+            "Stacks": [
+                {
+                    "Outputs": [
+                        {"OutputKey": "InputBucketName", "OutputValue": BUCKET},
+                    ]
+                }
+            ]
+        }
+
+    def track_describe_resources(**_kwargs: Any) -> dict[str, Any]:
+        call_order.append("describe_resources")
+        return {
+            "StackResources": [
+                {
+                    "ResourceType": "AWS::Logs::LogGroup",
+                    "PhysicalResourceId": LOG_GROUP,
+                }
+            ]
+        }
+
+    def track_filter(**_kwargs: Any) -> dict[str, Any]:
+        call_order.append("filter_logs")
+        return {"events": []}
+
+    def track_put(**_kwargs: Any) -> dict[str, str]:
+        call_order.append("put_object")
+        return {"VersionId": "v1", "ETag": '"etag"'}
+
+    session._sts.get_caller_identity.side_effect = track_identity
+    session._cloudformation.describe_stacks.side_effect = track_describe_stacks
+    session._cloudformation.describe_stack_resources.side_effect = (
+        track_describe_resources
+    )
+    session._logs.filter_log_events.side_effect = track_filter
+    session._logs.get_paginator.return_value.paginate.return_value = [{"events": []}]
+    session._s3.put_object.side_effect = track_put
+    session._s3.delete_object.return_value = {}
+
+    code = smoke.main(
+        ["--profile", "my-smoke-sso", "--timeout", "0", "--cleanup"],
+        session_factory=lambda **_: session,
+    )
+
+    assert code == 1
+    first_put = call_order.index("put_object")
+    assert call_order[:first_put] == [
+        "sts",
+        "describe_stacks",
+        "describe_resources",
+        "filter_logs",
+    ]
+    assert [call.args[0] for call in session.client.call_args_list] == [
+        "sts",
+        "cloudformation",
+        "logs",
+        "s3",
+    ]
+
+
+def test_smoke_matrix_retains_txt_filter_case_and_versioned_cleanup() -> None:
+    s3 = MagicMock()
+    logs = MagicMock()
+    versions = iter([f"v{i}" for i in range(1, 20)])
+
+    def put_object(**_kwargs: Any) -> dict[str, str]:
+        return {"VersionId": next(versions), "ETag": '"e"'}
+
+    s3.put_object.side_effect = put_object
+    logs.get_paginator.return_value.paginate.return_value = [{"events": []}]
+
+    code = smoke.run_smoke_matrix(
+        s3=s3,
+        logs=logs,
+        timeout=0,
+        cleanup=True,
+        bucket=BUCKET,
+        log_group=LOG_GROUP,
+    )
+
+    assert code == 1
+    put_keys = [call.kwargs["Key"] for call in s3.put_object.call_args_list]
+    assert any(key.endswith("test.txt") for key in put_keys)
+    assert all(key.startswith("incoming/smoke-") for key in put_keys)
+    for call in s3.delete_object.call_args_list:
+        assert call.kwargs["VersionId"]
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"sso_account_id": ACCOUNT, "sso_role_name": "SmokeOperator"},
+        {"sso_account_id": ACCOUNT, "sso_session": "example"},
+        {"sso_role_name": "SmokeOperator", "sso_session": "example"},
+        {"sso_account_id": ACCOUNT},
+        {},
+    ],
+)
+def test_partial_sso_configuration_is_rejected(config: dict[str, str]) -> None:
+    assert smoke.profile_uses_identity_center(config) is False
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {
+            "sso_account_id": ACCOUNT,
+            "sso_role_name": "SmokeOperator",
+            "sso_session": "example-sso",
+        },
+        {
+            "sso_account_id": ACCOUNT,
+            "sso_role_name": "SmokeOperator",
+            "sso_start_url": "https://example.awsapps.com/start",
+        },
+    ],
+)
+def test_complete_modern_and_legacy_sso_configurations_are_accepted(
+    config: dict[str, str],
+) -> None:
+    assert smoke.profile_uses_identity_center(config) is True
+
+
+@pytest.mark.parametrize(
+    ("exc", "needle"),
+    [
+        (ProfileNotFound(profile="missing"), "AWS profile not found"),
+        (NoCredentialsError(), "AWS credentials unavailable"),
+        (UnauthorizedSSOTokenError(), "SSO session expired"),
+    ],
+)
+def test_session_setup_errors_are_human_readable(
+    exc: Exception,
+    needle: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def factory(**_kwargs: Any) -> MagicMock:
+        raise exc
+
+    code = smoke.main(
+        ["--check-only", "--profile", "my-smoke-sso"],
+        session_factory=factory,
+    )
+    captured = capsys.readouterr()
+    assert code == 1
+    assert needle in captured.err
+    assert ACCOUNT not in captured.err
+
+
+def test_prefix_is_printed_before_first_upload(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    s3 = MagicMock()
+    logs = MagicMock()
+    order: list[str] = []
+
+    def put_object(**_kwargs: Any) -> dict[str, str]:
+        order.append("put")
+        return {"VersionId": "v1", "ETag": '"e"'}
+
+    s3.put_object.side_effect = put_object
+    logs.get_paginator.return_value.paginate.return_value = [{"events": []}]
+
+    smoke.run_smoke_matrix(
+        s3=s3,
+        logs=logs,
+        timeout=0,
+        cleanup=False,
+        bucket=BUCKET,
+        log_group=LOG_GROUP,
+    )
+    output = capsys.readouterr().out
+    prefix_line = next(
+        line for line in output.splitlines() if line.startswith("Created prefix:")
+    )
+    assert "incoming/smoke-" in prefix_line
+    assert order and order[0] == "put"
+    # Prefix announcement appears in output before any failure table that
+    # follows uploads; ensure the printed prefix exists when puts occurred.
+    assert "Created prefix:" in output
+
+
+def test_failure_after_upload_still_cleans_recorded_versions() -> None:
+    s3 = MagicMock()
+    logs = MagicMock()
+    puts = {"count": 0}
+
+    def put_object(**_kwargs: Any) -> dict[str, str]:
+        puts["count"] += 1
+        if puts["count"] == 2:
+            raise _client_error("InternalError", "boom")
+        return {"VersionId": f"v{puts['count']}", "ETag": '"e"'}
+
+    s3.put_object.side_effect = put_object
+
+    with pytest.raises(ClientError):
+        smoke.run_smoke_matrix(
+            s3=s3,
+            logs=logs,
+            timeout=0,
+            cleanup=True,
+            bucket=BUCKET,
+            log_group=LOG_GROUP,
+        )
+
+    assert s3.delete_object.call_count == 1
+    assert s3.delete_object.call_args.kwargs["VersionId"] == "v1"
+
+
+def test_log_polling_failure_still_triggers_cleanup() -> None:
+    s3 = MagicMock()
+    logs = MagicMock()
+    s3.put_object.return_value = {"VersionId": "v1", "ETag": '"e"'}
+    logs.get_paginator.side_effect = _client_error("AccessDeniedException")
+
+    with pytest.raises(ClientError):
+        smoke.run_smoke_matrix(
+            s3=s3,
+            logs=logs,
+            timeout=0,
+            cleanup=True,
+            bucket=BUCKET,
+            log_group=LOG_GROUP,
+        )
+
+    assert s3.delete_object.call_count == s3.put_object.call_count
+    for call in s3.delete_object.call_args_list:
+        assert call.kwargs["VersionId"]
+
+
+def test_one_delete_failure_continues_remaining_versions(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    s3 = MagicMock()
+    logs = MagicMock()
+    versions = iter([f"v{i}" for i in range(1, 20)])
+
+    def put_object(**_kwargs: Any) -> dict[str, str]:
+        return {"VersionId": next(versions), "ETag": '"e"'}
+
+    def delete_object(**kwargs: Any) -> dict[str, str]:
+        if kwargs["VersionId"] == "v1":
+            raise _client_error("AccessDenied")
+        return {}
+
+    s3.put_object.side_effect = put_object
+    s3.delete_object.side_effect = delete_object
+    logs.get_paginator.return_value.paginate.return_value = [{"events": []}]
+
+    code = smoke.run_smoke_matrix(
+        s3=s3,
+        logs=logs,
+        timeout=0,
+        cleanup=True,
+        bucket=BUCKET,
+        log_group=LOG_GROUP,
+    )
+
+    assert code == 1
+    assert s3.delete_object.call_count == s3.put_object.call_count
+    assert "Version cleanup failed" in capsys.readouterr().err
+
+
+def test_no_delete_without_cleanup_flag() -> None:
+    s3 = MagicMock()
+    logs = MagicMock()
+    s3.put_object.return_value = {"VersionId": "v1", "ETag": '"e"'}
+    logs.get_paginator.return_value.paginate.return_value = [{"events": []}]
+
+    smoke.run_smoke_matrix(
+        s3=s3,
+        logs=logs,
+        timeout=0,
+        cleanup=False,
+        bucket=BUCKET,
+        log_group=LOG_GROUP,
+    )
+    s3.delete_object.assert_not_called()
+
+
+def test_smoke_matrix_detects_sensitive_values_in_logs(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    s3 = MagicMock()
+    logs = MagicMock()
+    captured: dict[str, Any] = {"keys": [], "etag": "leak-etag"}
+
+    def put_object(**kwargs: Any) -> dict[str, str]:
+        key = kwargs["Key"]
+        captured["keys"].append(key)
+        if key.endswith("valid.json"):
+            run_id = key.split("/")[1]
+            captured["field"] = f"DO_NOT_LOG_FIELD_{run_id}"
+            captured["value"] = f"DO_NOT_LOG_{run_id}"
+        return {
+            "VersionId": f"v{len(captured['keys'])}",
+            "ETag": f'"{captured["etag"]}"',
+        }
+
+    def paginate(**_kwargs: Any) -> list[dict[str, Any]]:
+        leak = (
+            f"{BUCKET} {captured['keys'][0]} {captured['field']} "
+            f"{captured['value']} {captured['etag']}"
+        )
+        return [{"events": [{"message": leak}]}]
+
+    s3.put_object.side_effect = put_object
+    logs.get_paginator.return_value.paginate.side_effect = paginate
+
+    code = smoke.run_smoke_matrix(
+        s3=s3,
+        logs=logs,
+        timeout=0,
+        cleanup=False,
+        bucket=BUCKET,
+        log_group=LOG_GROUP,
+    )
+    output = capsys.readouterr().out
+
+    assert code == 1
+    assert "uploaded payload value or field name appeared in logs" in output
+    assert "raw bucket name or object key appeared in logs" in output
+    assert "S3 ETag fingerprint appeared in logs" in output
