@@ -2,17 +2,17 @@
 
 ## Purpose
 
-Explain how humans and coding agents can make small, reviewable changes without
-weakening the stack's security or deployment boundaries.
+How humans and coding agents make small, reviewable changes without weakening
+security or deployment boundaries.
 
 ## Who should use this
 
-Contributors, maintainers, and reviewers preparing a pull request.
+Contributors and maintainers preparing a pull request.
 
 ## What this does not do
 
-This document does not grant AWS access, authorize deployment, or replace the
-account-owner procedures in [platform access](docs/platform-access.md).
+Does not grant AWS access or authorize deployment—see
+[platform access](docs/platform-access.md).
 
 ## Before changing code
 

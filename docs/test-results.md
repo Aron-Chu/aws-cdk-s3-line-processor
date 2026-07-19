@@ -2,8 +2,8 @@
 
 ## Purpose
 
-Record dated evidence tied to an exact deployed commit or an explicitly named
-working-tree candidate.
+Dated evidence for an exact commit or named working-tree candidate—not an
+evergreen status page.
 
 ## Evidence rule
 

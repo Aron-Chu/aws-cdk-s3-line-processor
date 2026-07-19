@@ -33,28 +33,19 @@ suite with coverage, and synthesize CloudFormation without AWS access.
 
 ## Deploy and maintain
 
-Relevant changes on protected `main` run credential-free validate, then a
-protected plan job that prepares one CloudFormation change set over a
-short-lived OIDC session. An empty plan skips execute. Smoke is a separate,
-explicitly authorized operator step. Full procedures live in
-[Operations](docs/operations.md). CDK bootstrap is an account/region
-prerequisite outside this application stack; see
-[Platform access](docs/platform-access.md). Developers may use the optional
-own-account sandbox procedure in Operations; never against the shared
-repository account.
+Protected `main` runs credential-free validate, then an OIDC plan that prepares
+one CloudFormation change set; an empty plan skips execute. Smoke is a separate,
+explicitly authorized step—see [Operations](docs/operations.md). Bootstrap is an
+account/region prerequisite ([Platform access](docs/platform-access.md)).
+Optional own-account sandbox lives in Operations; never use it against the
+shared repository account.
 
-## Table of contents
+## Docs
 
-| Need | Document |
-| --- | --- |
-| Understand architecture, security, networking, and tradeoffs | [Design](docs/design.md) |
-| Contribute or review an agent-assisted change | [Contributing](CONTRIBUTING.md) |
-| Deploy, smoke-test, diagnose, or clean up | [Operations](docs/operations.md) |
-| Prepare AWS identities, CDK bootstrap, OIDC, and GitHub controls | [Platform access](docs/platform-access.md) |
-| Review recorded local and live evidence | [Test results](docs/test-results.md) |
-| Report a vulnerability privately | [Security](SECURITY.md) |
-| Guide a coding agent working in this repository | [Agent guide](AGENTS.md) |
-
-Documentation uses three labels: **Implemented** for verified current behavior,
-**Platform prerequisite** for controls owned outside this stack, and **Future
-hardening** for designs that are not yet implemented.
+- [Design](docs/design.md)
+- [Contributing](CONTRIBUTING.md)
+- [Operations](docs/operations.md)
+- [Platform access](docs/platform-access.md)
+- [Test results](docs/test-results.md)
+- [Security](SECURITY.md)
+- [Agent guide](AGENTS.md)

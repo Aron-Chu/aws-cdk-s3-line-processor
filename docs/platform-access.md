@@ -2,8 +2,8 @@
 
 ## Purpose
 
-Define the AWS account and GitHub controls required before this repository can
-deploy or operate safely.
+AWS account and GitHub controls required before this repository can deploy or
+operate safely.
 
 ## Who should use this
 
@@ -13,12 +13,9 @@ AWS account owners and GitHub administrators. Contributors use
 
 ## What this does not do
 
-This guide does not authorize an agent or contributor to create identities,
-bootstrap an account, change GitHub settings, or deploy. The application stack
-does not create administrators, human access, GitHub OIDC, or bootstrap roles.
-
-Labels used below: **Implemented** is repository behavior, **Platform
-prerequisite** is externally owned, and **Future hardening** is not active.
+Does not authorize creating identities, bootstrapping, changing GitHub
+settings, or deploying. This application stack does not create administrators,
+human access, OIDC, or bootstrap roles.
 
 ## What to do now
 

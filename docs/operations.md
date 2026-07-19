@@ -2,25 +2,18 @@
 
 ## Purpose
 
-Provide routine, repeatable procedures for validating, deploying, observing,
-maintaining, recovering, and cleaning up the stack.
+Routine procedures for validating, deploying, observing, recovering, and
+cleaning up this stack.
 
 ## Who should use this
 
-Repository maintainers, deployment approvers, and IAM Identity Center smoke
-operators. Commands assume Ubuntu/WSL or a similar Linux environment.
+Maintainers, deployment approvers, and Identity Center smoke operators on
+Ubuntu/WSL or similar Linux.
 
 ## What this does not do
 
-This document does not create AWS identities, GitHub OIDC trust, CDK bootstrap
-roles, repository rules, or environment protections. Platform owners prepare
-those controls using [platform access](platform-access.md).
-
-## Status labels
-
-- **Implemented:** Verified repository or workflow behavior.
-- **Platform prerequisite:** Required outside this stack.
-- **Future hardening:** Designed but not yet implemented.
+Does not create AWS identities, OIDC trust, bootstrap roles, or GitHub
+controls—see [platform access](platform-access.md).
 
 ## Prerequisites
 
