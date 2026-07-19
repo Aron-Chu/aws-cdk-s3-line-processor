@@ -9,7 +9,7 @@
   </defs>
   <rect width="1280" height="840" fill="#ffffff"/>
   <text class="title" x="40" y="52">Secure S3 Line Processor</text>
-  <text class="subtitle" x="40" y="86">Runtime data flow and protected CDK deployment — official AWS service icons</text>
+  <text class="subtitle" x="40" y="86">Runtime data flow and protected CDK deployment (official AWS service icons)</text>
   <rect x="300" y="120" width="940" height="690" rx="18" fill="#f8fbff" stroke="#2563eb" stroke-width="2"/>
   <text x="325" y="160" font-family="Arial,sans-serif" font-size="17" font-weight="600" fill="#1d4ed8">AWS account</text>
   <text x="325" y="190" font-family="Arial,sans-serif" font-size="14" font-weight="600" fill="#334155">Runtime data plane</text>

@@ -11,7 +11,7 @@ Contributors and maintainers preparing a pull request.
 
 ## What this does not do
 
-Does not grant AWS access or authorize deployment—see
+Does not grant AWS access or authorize deployment. See
 [platform access](docs/platform-access.md).
 
 ## Before changing code
@@ -60,15 +60,9 @@ deployment or smoke test occurred; record live evidence separately.
 Agents may inspect, edit, test, and synthesize within the approved task. They
 must not approve their own work, disclose secrets, change account or repository
 settings, deploy, destroy, or delete retained data without explicit human
-authorization.
-
-Before merge, a human must review:
-
-- the complete diff and generated template impact;
-- IAM, networking, logging, retention, and failure behavior;
-- test and validation output;
-- deployment and rollback impact; and
-- every claim that describes live AWS or GitHub state.
+authorization. A human reviews the full diff/template impact, IAM and logging
+behavior, validation output, deploy/rollback impact, and every live-state claim
+before merge.
 
 ## Review and merge
 

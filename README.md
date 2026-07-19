@@ -35,7 +35,7 @@ suite with coverage, and synthesize CloudFormation without AWS access.
 
 Protected `main` runs credential-free validate, then an OIDC plan that prepares
 one CloudFormation change set; an empty plan skips execute. Smoke is a separate,
-explicitly authorized step—see [Operations](docs/operations.md). Bootstrap is an
+explicitly authorized step. See [Operations](docs/operations.md). Bootstrap is an
 account/region prerequisite ([Platform access](docs/platform-access.md)).
 Optional own-account sandbox lives in Operations; never use it against the
 shared repository account.
