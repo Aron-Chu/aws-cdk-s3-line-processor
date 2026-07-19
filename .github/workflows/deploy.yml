@@ -255,6 +255,9 @@ jobs:
             cat plan-evidence/change-set.md
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Include mask helper in plan evidence
+        run: cp scripts/mask_stack_outputs.sh plan-evidence/mask_stack_outputs.sh
+
       - name: Upload immutable plan evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -303,26 +306,7 @@ jobs:
           unset-current-credentials: true
 
       - name: Mask existing stack output values
-        run: |
-          set +e
-          aws cloudformation describe-stacks \
-            --stack-name S3LineProcessorStack \
-            --output json > /tmp/stack-for-mask.json 2>/tmp/stack-for-mask.err
-          status=$?
-          set -e
-          if [ "$status" -ne 0 ]; then
-            if grep -Eqi 'does not exist' /tmp/stack-for-mask.err; then
-              exit 0
-            fi
-            cat /tmp/stack-for-mask.err >&2
-            exit "$status"
-          fi
-          jq -r '.Stacks[0].Outputs[]? | .OutputValue // empty' /tmp/stack-for-mask.json \
-            | while IFS= read -r value; do
-              [ -n "$value" ] || continue
-              echo "::add-mask::$value"
-            done
-          rm -f /tmp/stack-for-mask.json /tmp/stack-for-mask.err
+        run: bash plan-evidence/mask_stack_outputs.sh S3LineProcessorStack
 
       - name: Execute approved change set
         env:
