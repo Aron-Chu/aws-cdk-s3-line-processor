@@ -17,6 +17,7 @@ on:
       - "requirements.lock"
       - "requirements*.txt"
       - "s3_line_processor/**"
+      - "scripts/mask_stack_outputs.sh"
   workflow_dispatch:
 
 permissions:
@@ -178,17 +179,8 @@ jobs:
 
       - name: Mask existing stack output values
         run: |
-          if ! aws cloudformation describe-stacks \
-            --stack-name S3LineProcessorStack \
-            --output json > /tmp/stack-for-mask.json 2>/dev/null; then
-            exit 0
-          fi
-          jq -r '.Stacks[0].Outputs[]? | .OutputValue // empty' /tmp/stack-for-mask.json \
-            | while IFS= read -r value; do
-              [ -n "$value" ] || continue
-              echo "::add-mask::$value"
-            done
-          rm -f /tmp/stack-for-mask.json
+          chmod +x scripts/mask_stack_outputs.sh
+          scripts/mask_stack_outputs.sh S3LineProcessorStack
 
       - name: Prepare CloudFormation change set
         id: prepare
@@ -312,17 +304,25 @@ jobs:
 
       - name: Mask existing stack output values
         run: |
-          if ! aws cloudformation describe-stacks \
+          set +e
+          aws cloudformation describe-stacks \
             --stack-name S3LineProcessorStack \
-            --output json > /tmp/stack-for-mask.json 2>/dev/null; then
-            exit 0
+            --output json > /tmp/stack-for-mask.json 2>/tmp/stack-for-mask.err
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            if grep -Eqi 'does not exist' /tmp/stack-for-mask.err; then
+              exit 0
+            fi
+            cat /tmp/stack-for-mask.err >&2
+            exit "$status"
           fi
           jq -r '.Stacks[0].Outputs[]? | .OutputValue // empty' /tmp/stack-for-mask.json \
             | while IFS= read -r value; do
               [ -n "$value" ] || continue
               echo "::add-mask::$value"
             done
-          rm -f /tmp/stack-for-mask.json
+          rm -f /tmp/stack-for-mask.json /tmp/stack-for-mask.err
 
       - name: Execute approved change set
         env:

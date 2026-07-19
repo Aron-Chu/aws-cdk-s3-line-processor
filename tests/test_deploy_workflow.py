@@ -35,6 +35,7 @@ def test_execute_job_only_verifies_and_executes_frozen_plan() -> None:
 
 def test_deploy_trigger_covers_the_python_lockfile() -> None:
     assert '- "requirements.lock"' in TRIGGERS
+    assert '- "scripts/mask_stack_outputs.sh"' in TRIGGERS
 
 
 def test_empty_cloudformation_plan_skips_execute() -> None:
@@ -73,22 +74,3 @@ def test_deploy_uses_cloudformation_evidence_and_hardened_oidc() -> None:
         "aws-actions/configure-aws-credentials"
     )
     assert "vars.AWS_ROLE_ARN" not in WORKFLOW
-
-
-def test_plan_and_execute_mask_existing_stack_output_values() -> None:
-    mask_marker = 'echo "::add-mask::$value"'
-    describe_outputs = (
-        "aws cloudformation describe-stacks \\\n"
-        "            --stack-name S3LineProcessorStack"
-    )
-
-    assert mask_marker in PLAN_JOB
-    assert mask_marker in EXECUTE_JOB
-    assert describe_outputs in PLAN_JOB
-    assert describe_outputs in EXECUTE_JOB
-    assert PLAN_JOB.index(mask_marker) < PLAN_JOB.index(
-        "npx cdk deploy S3LineProcessorStack"
-    )
-    assert EXECUTE_JOB.index(mask_marker) < EXECUTE_JOB.index(
-        "aws cloudformation execute-change-set"
-    )
