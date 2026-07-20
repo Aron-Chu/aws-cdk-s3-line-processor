@@ -17,6 +17,20 @@ Before citing a result, compare its commit with current `main` and distinguish:
 | Live read-only | Observed from AWS without changing resources |
 | Operator action | A write-capable deploy, smoke, rollback, or cleanup performed by an authorized human |
 
+## Lambda error-boundary hardening (July 19, 2026)
+
+Local validation on branch `codex/harden-lambda-errors` for commit `7278174`
+(`fix: harden lambda error boundaries`):
+
+- focused `tests/test_handler.py`: 62 passed;
+- full `make check`: 147 passed with 96.11% application coverage;
+- `git diff --check` clean;
+- CDK synthesis completed with no application resource changes expected (handler
+  and docs only; stack topology unchanged).
+
+No live deploy, smoke, or AWS mutation was performed for this candidate. Exhausted
+asynchronous failures still lack a durable on-failure destination.
+
 ## Current smoke posture (July 19, 2026)
 
 The smoke commands require a temporary assumed-role profile. Identity Center is

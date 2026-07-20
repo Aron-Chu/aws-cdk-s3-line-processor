@@ -2,8 +2,21 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from botocore.exceptions import (
+    ClientError,
+    ConnectTimeoutError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 
 from lambda_src import handler
+
+SENSITIVE_ACCOUNT_ID = "123456789012"
+SENSITIVE_ARN = f"arn:aws:iam::{SENSITIVE_ACCOUNT_ID}:role/leak-role"
+SENSITIVE_BUCKET = "secret-input-bucket"
+SENSITIVE_KEY = "incoming/secret-object.json"
+SENSITIVE_MESSAGE = "TOP-SECRET-EXCEPTION-DETAIL"
+SENSITIVE_ETAG = "leak-etag-9f86d081"
 
 
 def test_library_loggers_are_quiet() -> None:
@@ -50,6 +63,7 @@ def make_record(
     key: str = "incoming/valid.json",
     version_id: str | None = "version-1",
     size: int = 42,
+    bucket: str = "input-bucket",
 ) -> dict:
     object_record = {
         "key": key,
@@ -62,10 +76,56 @@ def make_record(
     return {
         "eventSource": "aws:s3",
         "s3": {
-            "bucket": {"name": "input-bucket"},
+            "bucket": {"name": bucket},
             "object": object_record,
         },
     }
+
+
+def _client_error(
+    code: str,
+    message: str = SENSITIVE_MESSAGE,
+    status: int = 400,
+) -> ClientError:
+    return ClientError(
+        {
+            "Error": {
+                "Code": code,
+                "Message": (
+                    f"{message} bucket={SENSITIVE_BUCKET} key={SENSITIVE_KEY} "
+                    f"arn={SENSITIVE_ARN} account={SENSITIVE_ACCOUNT_ID} "
+                    f"etag={SENSITIVE_ETAG}"
+                ),
+            },
+            "ResponseMetadata": {
+                "HTTPStatusCode": status,
+                "RequestId": "LEAK-REQUEST-ID",
+                "HostId": "LEAK-HOST-ID",
+                "HTTPHeaders": {"x-amz-request-id": "LEAK-REQUEST-ID"},
+            },
+        },
+        "GetObject",
+    )
+
+
+def _assert_no_sensitive_text(*values: object) -> None:
+    combined = " ".join(str(value) for value in values)
+    for fragment in (
+        SENSITIVE_ACCOUNT_ID,
+        SENSITIVE_ARN,
+        SENSITIVE_BUCKET,
+        SENSITIVE_KEY,
+        SENSITIVE_MESSAGE,
+        SENSITIVE_ETAG,
+        "LEAK-REQUEST-ID",
+        "LEAK-HOST-ID",
+        "input-bucket",
+        "incoming/valid.json",
+        "etag-1",
+        "access denied",
+        "\\ud800",
+    ):
+        assert fragment not in combined
 
 
 @pytest.mark.parametrize(
@@ -408,6 +468,7 @@ def test_handler_propagates_s3_operational_failures(
 
     logged = json.loads(caplog.records[-1].message)
     assert logged["status"] == "failed"
+    assert logged["failure_code"] == "unexpected_error"
     assert logged["error_type"] == "PermissionError"
     assert logged["object_ref"] == handler._object_reference(
         "input-bucket", "incoming/valid.json", "version-1"
@@ -421,6 +482,202 @@ def test_handler_propagates_s3_operational_failures(
     assert logged["service"] == "s3-line-processor"
     assert logged["environment"] == "sandbox"
     assert logged["log_schema_version"] == 2
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("bucket", "\ud800"),
+        ("key", "incoming/\ud800.json"),
+    ],
+)
+def test_handler_rejects_malformed_unicode_bucket_or_key_without_s3_read(
+    field: str,
+    value: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = FakeS3Client([])
+    monkeypatch.setattr(handler, "s3_client", client)
+    record = make_record()
+    if field == "bucket":
+        record["s3"]["bucket"]["name"] = value
+    else:
+        record["s3"]["object"]["key"] = value
+
+    response = handler.lambda_handler(
+        {"Records": [record]},
+        SimpleNamespace(aws_request_id="request-1"),
+    )
+
+    logged_message = caplog.records[-1].message
+    assert response["results"][0]["status"] == "rejected"
+    assert response["results"][0]["reason_code"] == "invalid_s3_record"
+    assert client.calls == []
+    assert value not in logged_message
+    assert "\\ud800" not in logged_message
+    _assert_no_sensitive_text(logged_message, response)
+
+
+def test_handler_contains_safe_context_failures_as_operational_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = FakeS3Client([])
+    monkeypatch.setattr(handler, "s3_client", client)
+
+    def explode(_record: object) -> dict:
+        raise RuntimeError(
+            f"{SENSITIVE_MESSAGE} arn={SENSITIVE_ARN} "
+            f"account={SENSITIVE_ACCOUNT_ID} bucket={SENSITIVE_BUCKET}"
+        )
+
+    monkeypatch.setattr(handler, "_safe_record_context", explode)
+
+    with pytest.raises(
+        handler.OperationalError, match="retryable_object_processing_failure"
+    ) as raised:
+        handler.lambda_handler(
+            {"Records": [make_record()]},
+            SimpleNamespace(aws_request_id="request-1"),
+        )
+
+    logged = json.loads(caplog.records[-1].message)
+    assert raised.value.__cause__ is None
+    assert logged["status"] == "failed"
+    assert logged["failure_code"] == "unexpected_error"
+    assert logged["error_type"] == "RuntimeError"
+    assert client.calls == []
+    _assert_no_sensitive_text(str(raised.value), caplog.records[-1].message)
+
+
+@pytest.mark.parametrize(
+    ("error", "failure_code", "error_type"),
+    [
+        (_client_error("AccessDenied", status=403), "s3_access_denied", "ClientError"),
+        (
+            _client_error("NoSuchKey", status=404),
+            "s3_object_unavailable",
+            "ClientError",
+        ),
+        (
+            _client_error("NoSuchVersion", status=404),
+            "s3_object_unavailable",
+            "ClientError",
+        ),
+        (
+            ConnectTimeoutError(endpoint_url="https://s3.example.invalid"),
+            "s3_timeout",
+            "ConnectTimeoutError",
+        ),
+        (
+            ReadTimeoutError(endpoint_url="https://s3.example.invalid"),
+            "s3_timeout",
+            "ReadTimeoutError",
+        ),
+        (
+            EndpointConnectionError(endpoint_url="https://s3.example.invalid"),
+            "s3_service_unavailable",
+            "EndpointConnectionError",
+        ),
+        (
+            _client_error("SlowDown", status=503),
+            "s3_service_unavailable",
+            "ClientError",
+        ),
+        (
+            _client_error("InternalError", status=500),
+            "s3_service_error",
+            "ClientError",
+        ),
+        (
+            _client_error("WeirdUnknownCode", status=400),
+            "unexpected_error",
+            "ClientError",
+        ),
+        (
+            RuntimeError(
+                f"{SENSITIVE_MESSAGE} arn={SENSITIVE_ARN} "
+                f"bucket={SENSITIVE_BUCKET} key={SENSITIVE_KEY}"
+            ),
+            "unexpected_error",
+            "RuntimeError",
+        ),
+    ],
+)
+def test_handler_maps_operational_failures_to_allowlisted_codes(
+    error: Exception,
+    failure_code: str,
+    error_type: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = FakeS3Client([error])
+    monkeypatch.setattr(handler, "s3_client", client)
+
+    with pytest.raises(
+        handler.OperationalError, match="retryable_object_processing_failure"
+    ) as raised:
+        handler.lambda_handler(
+            {"Records": [make_record()]},
+            SimpleNamespace(aws_request_id="request-1"),
+        )
+
+    logged = json.loads(caplog.records[-1].message)
+    assert raised.value.__cause__ is None
+    assert logged["status"] == "failed"
+    assert logged["failure_code"] == failure_code
+    assert logged["error_type"] == error_type
+    assert set(logged) >= {
+        "status",
+        "failure_code",
+        "error_type",
+        "request_id",
+        "service",
+        "environment",
+        "log_schema_version",
+    }
+    _assert_no_sensitive_text(str(raised.value), caplog.records[-1].message, logged)
+
+
+@pytest.mark.parametrize("event", [{}, {"Records": []}, {"Records": {}}])
+def test_handler_rejects_invalid_invocation_envelope_safely(
+    event: dict,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = FakeS3Client([])
+    monkeypatch.setattr(handler, "s3_client", client)
+
+    with pytest.raises(
+        handler.OperationalError, match="invalid_invocation_event"
+    ) as raised:
+        handler.lambda_handler(event, SimpleNamespace(aws_request_id="request-1"))
+
+    logged = json.loads(caplog.records[-1].message)
+    assert raised.value.__cause__ is None
+    assert client.calls == []
+    assert logged == {
+        "status": "failed",
+        "failure_code": "invalid_event_envelope",
+        "error_type": "OperationalError",
+        "request_id": "request-1",
+        "service": "s3-line-processor",
+        "environment": "sandbox",
+        "log_schema_version": 2,
+    }
+    assert "Records" not in caplog.records[-1].message
+
+
+def test_s3_client_config_is_bounded() -> None:
+    config = handler.S3_CLIENT_CONFIG
+
+    assert config.connect_timeout == 2
+    assert config.read_timeout == 5
+    assert config.retries == {
+        "mode": "standard",
+        "total_max_attempts": 2,
+    }
 
 
 def test_handler_logs_safe_success_metadata_without_uploaded_values(
@@ -490,12 +747,6 @@ def test_handler_rejects_reported_or_content_length_over_limit(
 
     assert content_length["results"][0]["reason_code"] == "object_too_large"
     assert body.closed is True
-
-
-@pytest.mark.parametrize("event", [{}, {"Records": []}, {"Records": {}}])
-def test_handler_requires_non_empty_records(event: dict) -> None:
-    with pytest.raises(ValueError, match="Records must be a non-empty list"):
-        handler.lambda_handler(event, SimpleNamespace(aws_request_id="request-1"))
 
 
 def test_handler_ignores_s3_test_event(caplog: pytest.LogCaptureFixture) -> None:
