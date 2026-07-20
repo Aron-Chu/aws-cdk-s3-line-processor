@@ -133,12 +133,30 @@ not create a forwarding pipeline.
 
 | Class | Examples | Behavior |
 | --- | --- | --- |
-| Permanent rejection | Unexpected key/record, oversized object, empty or multiline input, invalid UTF-8/JSON, non-object JSON | Log `rejected` with a reason code and continue with other records |
-| Operational error | S3 read failure or unexpected service error | Log `failed` with a safe exception class, then raise generic `OperationalError` for retry |
+| Permanent rejection | Unexpected key/record, malformed Unicode bucket/key metadata, oversized object, empty or multiline input, invalid UTF-8/JSON, non-object JSON | Log `rejected` with a reason code and continue with other records |
+| Invalid invocation envelope | Missing, empty, or non-list `Records` | Log `failed` with `failure_code=invalid_event_envelope`, then raise generic `OperationalError` |
+| Operational error | S3 access denial, missing object/version, timeout, throttling/5xx, or unexpected service/implementation error | Log `failed` with safe `error_type` plus allowlisted `failure_code`, then raise generic `OperationalError` for retry |
 
-The original service exception message and traceback are not chained because
-they could contain a bucket, key, or endpoint. The Lambda runtime may still emit
-its standard record for the generic raised error.
+Malformed documents and malformed S3 record metadata are permanent rejections.
+Invalid invocation envelopes and operational failures fail the whole invocation.
+Direct S3-to-Lambda delivery retries at invocation scope; there is no partial-batch
+acknowledgement protocol in this stack.
+
+Operational logs use only stable allowlisted `failure_code` values
+(`s3_access_denied`, `s3_object_unavailable`, `s3_timeout`,
+`s3_service_unavailable`, `s3_service_error`, `unexpected_error`, and
+`invalid_event_envelope`). Exception messages, raw AWS error codes, HTTP
+headers, request/host IDs, endpoints, ARNs, account IDs, bucket names, object
+keys, ETags, and uploaded data stay out of application logs. The original
+service exception is not chained onto the raised `OperationalError`. The Lambda
+runtime may still emit its standard record for the generic raised error.
+
+All operational failures remain retryable until a durable failure destination is
+designed. An on-failure destination and alarm remain future hardening, not
+implemented behavior. Missing objects (`NoSuchKey` / `NoSuchVersion`) are not
+treated as success because there is still no durable place to record permanent
+operational loss.
+
 
 ## Delivery and retention
 
