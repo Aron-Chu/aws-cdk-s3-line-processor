@@ -577,7 +577,7 @@ def test_handler_contains_safe_context_failures_as_operational_errors(
         ),
         (
             EndpointConnectionError(endpoint_url="https://s3.example.invalid"),
-            "s3_timeout",
+            "s3_service_unavailable",
             "EndpointConnectionError",
         ),
         (
@@ -669,7 +669,7 @@ def test_handler_rejects_invalid_invocation_envelope_safely(
     assert "Records" not in caplog.records[-1].message
 
 
-def test_s3_client_config_fits_lambda_timeout() -> None:
+def test_s3_client_config_is_bounded() -> None:
     config = handler.S3_CLIENT_CONFIG
 
     assert config.connect_timeout == 2

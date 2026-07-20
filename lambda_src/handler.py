@@ -45,11 +45,6 @@ _SERVICE_UNAVAILABLE_CODES = frozenset(
     }
 )
 _SERVICE_ERROR_CODES = frozenset({"InternalError", "InternalServerError"})
-_TIMEOUT_EXCEPTIONS = (
-    ConnectTimeoutError,
-    ReadTimeoutError,
-    EndpointConnectionError,
-)
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -249,19 +244,18 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
 
 def _operational_failure_code(error: BaseException) -> str:
-    if isinstance(error, _TIMEOUT_EXCEPTIONS):
+    if isinstance(error, (ConnectTimeoutError, ReadTimeoutError)):
         return "s3_timeout"
-
+    if isinstance(error, EndpointConnectionError):
+        return "s3_service_unavailable"
     if not isinstance(error, ClientError):
         return "unexpected_error"
 
     response = error.response if isinstance(error.response, dict) else {}
-    error_info = response.get("Error")
-    error_info = error_info if isinstance(error_info, dict) else {}
-    code = error_info.get("Code")
+    error_block = response.get("Error")
+    code = error_block.get("Code") if isinstance(error_block, dict) else None
     metadata = response.get("ResponseMetadata")
-    metadata = metadata if isinstance(metadata, dict) else {}
-    status = metadata.get("HTTPStatusCode")
+    status = metadata.get("HTTPStatusCode") if isinstance(metadata, dict) else None
 
     if code in _ACCESS_DENIED_CODES:
         return "s3_access_denied"

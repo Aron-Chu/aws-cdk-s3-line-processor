@@ -135,7 +135,7 @@ not create a forwarding pipeline.
 | --- | --- | --- |
 | Permanent rejection | Unexpected key/record, malformed Unicode bucket/key metadata, oversized object, empty or multiline input, invalid UTF-8/JSON, non-object JSON | Log `rejected` with a reason code and continue with other records |
 | Invalid invocation envelope | Missing, empty, or non-list `Records` | Log `failed` with `failure_code=invalid_event_envelope`, then raise generic `OperationalError` |
-| Operational error | S3 access denial, missing object/version, timeout, throttling/5xx, or unexpected service/implementation error | Log `failed` with safe `error_type` plus allowlisted `failure_code`, then raise generic `OperationalError` for retry |
+| Operational error | S3 access denial, missing object/version, timeout, connection failure, throttling/5xx, or unexpected service/implementation error | Log `failed` with safe `error_type` plus allowlisted `failure_code`, then raise generic `OperationalError` for retry |
 
 Malformed documents and malformed S3 record metadata are permanent rejections.
 Invalid invocation envelopes and operational failures fail the whole invocation.
