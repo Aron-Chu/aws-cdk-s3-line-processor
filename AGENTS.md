@@ -19,7 +19,7 @@ bucket directly invokes one Python Lambda that validates one-line JSON files.
    `docs/design.md`, `docs/operations.md`, or `docs/platform-access.md`.
 2. Make the smallest change that satisfies the requirement.
 3. Add or update focused unit, workflow, CDK assertion, or documentation tests.
-4. Run `TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check` and `git diff --check`.
+4. Run `make check` and `git diff --check`.
 5. Report recorded, local, live, and operator-gated evidence separately.
 
 ## Prohibited behavior

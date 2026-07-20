@@ -24,6 +24,20 @@ the preferred workforce path; this Sandbox may use role assumption until it is
 available. No current live 9/9 smoke is recorded. Local proof remains
 `make check`; direct IAM-user/root sessions are rejected by design.
 
+## Assumed-role smoke support (July 19, 2026)
+
+Commit `37af6ae` landed on protected `main` through
+[PR #37](https://github.com/Aron-Chu/aws-cdk-s3-line-processor/pull/37)
+(`feat: support temporary assumed-role smoke profiles`).
+
+Local validation for that merge recorded 130 tests with 96.89% application
+coverage. Protected Deploy
+[run 29711577630](https://github.com/Aron-Chu/aws-cdk-s3-line-processor/actions/runs/29711577630)
+completed `validate` and `plan` for `37af6ae`, prepared an empty change set, and
+skipped execute. No application CloudFormation resources changed. No
+assumed-role 9/9 smoke is recorded yet; the private Smoke Operator role remains
+a platform prerequisite outside this repository.
+
 ## Merged documentation and GitOps update (July 19, 2026)
 
 Commit `7c6e4af` landed on protected `main` through
@@ -79,7 +93,7 @@ documented in [the design](design.md) and [operations](operations.md). The later
 
 ```bash
 make setup
-TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
+make check
 ```
 
 Use [operations](operations.md) for authorized live deployment and smoke
