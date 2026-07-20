@@ -12,7 +12,7 @@
 ## Evidence
 
 - [ ] Focused tests added or updated
-- [ ] `TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check`
+- [ ] `make check`
 - [ ] `git diff --check`
 - [ ] Synthesized infrastructure reviewed when applicable
 - [ ] Documentation and architecture export updated when applicable

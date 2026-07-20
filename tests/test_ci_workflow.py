@@ -12,3 +12,10 @@ def test_ci_runs_for_pull_requests_only() -> None:
 def test_ci_cannot_request_aws_credentials() -> None:
     assert "id-token: write" not in WORKFLOW
     assert "configure-aws-credentials" not in WORKFLOW
+
+
+def test_ci_validate_asserts_clean_worktree_after_validation() -> None:
+    assert "git diff --exit-code" in WORKFLOW
+    assert WORKFLOW.index("npx cdk synth --quiet") < WORKFLOW.index(
+        "git diff --exit-code"
+    )

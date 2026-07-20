@@ -64,3 +64,11 @@ def test_smoke_recipes_do_not_echo_expected_account() -> None:
     assert "@$(SMOKE_PY)" in smoke
     assert "\n\tSMOKE_EXPECTED_ACCOUNT=" not in smoke_check
     assert "\n\tSMOKE_EXPECTED_ACCOUNT=" not in smoke
+
+
+def test_test_recipe_supplies_linux_safe_temp_directory() -> None:
+    test_recipe = MAKEFILE.split("\ntest:", maxsplit=1)[1].split(
+        "\nsynth:", maxsplit=1
+    )[0]
+    assert "TMPDIR=/tmp TMP=/tmp TEMP=/tmp $(PY) -m pytest" in test_recipe
+    assert "check: lock-check lint test synth" in MAKEFILE

@@ -57,6 +57,14 @@ def test_plan_evidence_is_unique_and_stable_across_reruns() -> None:
     assert "github.run_attempt" not in EXECUTE_JOB
 
 
+def test_deploy_validate_asserts_clean_worktree_after_validation() -> None:
+    validate_job = BEFORE_PLAN.split("\n  validate:\n", maxsplit=1)[1]
+    assert "git diff --exit-code" in validate_job
+    assert validate_job.index("npx cdk synth --quiet") < validate_job.index(
+        "git diff --exit-code"
+    )
+
+
 def test_deploy_uses_cloudformation_evidence_and_hardened_oidc() -> None:
     assert "cdk diff" not in WORKFLOW
     assert "aws cloudformation describe-change-set" in PLAN_JOB

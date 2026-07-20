@@ -36,14 +36,14 @@ No AWS access required:
 
 ```bash
 make setup
-TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
+make check
 ```
 
 `make setup` creates the Python 3.14 venv, installs the hash-pinned graph, runs
 `npm ci`, and installs pre-commit. `make check` is lock + pre-commit + pytest
-(with coverage) + `cdk synth`. The `/tmp` overrides keep WSL from handing Linux
-tools a Windows temp path. Override `VENV`, `PROFILE`, `REGION`, or `STACK` as
-needed.
+(with coverage) + `cdk synth`. The test target supplies a Linux-safe pytest
+temporary directory so bare `make check` works on Ubuntu and WSL. Override
+`VENV`, `PROFILE`, `REGION`, or `STACK` as needed.
 
 Stop if the lock is stale, tests fail, the synthesized template is unreviewed,
 or unexpected files are tracked.
@@ -183,7 +183,7 @@ Human-edit `requirements.txt` / `requirements-dev.txt`; `requirements.lock` is
 the hashed graph for setup, CI, and deploy. Node stays on `package-lock.json`.
 
 ```bash
-make setup && make lock && TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
+make setup && make lock && make check
 ```
 
 Commit Python inputs and the lock together. Review Dependabot PRs; do not merge

@@ -105,6 +105,7 @@ jobs:
           .venv/bin/pytest
           source .venv/bin/activate
           npx cdk synth --quiet
+          git diff --exit-code
 
   plan:
     needs: validate
@@ -178,9 +179,7 @@ jobs:
         run: aws sts get-caller-identity --query Account --output text >/dev/null
 
       - name: Mask existing stack output values
-        run: |
-          chmod +x scripts/mask_stack_outputs.sh
-          scripts/mask_stack_outputs.sh S3LineProcessorStack
+        run: bash scripts/mask_stack_outputs.sh S3LineProcessorStack
 
       - name: Prepare CloudFormation change set
         id: prepare

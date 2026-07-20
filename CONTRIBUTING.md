@@ -30,7 +30,7 @@ Does not grant AWS access or authorize deployment. See
 3. Run:
 
    ```bash
-   TMPDIR=/tmp TMP=/tmp TEMP=/tmp make check
+   make check
    git diff --check
    ```
 

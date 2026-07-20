@@ -53,3 +53,6 @@ jobs:
 
       - name: Synthesize
         run: source .venv/bin/activate && npx cdk synth --quiet
+
+      - name: Assert clean worktree
+        run: git diff --exit-code

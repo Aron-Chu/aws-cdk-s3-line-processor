@@ -70,7 +70,7 @@ lint:
 
 test:
 	@test -x "$(PY)" || { echo "Missing $(PY). Run: make setup"; exit 1; }
-	$(PY) -m pytest
+	TMPDIR=/tmp TMP=/tmp TEMP=/tmp $(PY) -m pytest
 
 synth:
 	@test -x "$(PY)" || { echo "Missing $(PY). Run: make setup"; exit 1; }
