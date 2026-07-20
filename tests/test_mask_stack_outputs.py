@@ -1,4 +1,5 @@
 import os
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -13,14 +14,16 @@ PLAN_JOB, EXECUTE_JOB = AFTER_PLAN.split("\n  deploy:\n", maxsplit=1)
 def _run_mask_script(
     fake_aws: Path, *, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
+    bash = shutil.which("bash")
+    if bash is None:
+        raise RuntimeError("bash executable not found")
+
     environment = os.environ.copy()
     if env:
         environment.update(env)
     environment["PATH"] = f"{fake_aws.parent}{os.pathsep}{environment.get('PATH', '')}"
-    if not os.access(SCRIPT, os.X_OK):
-        SCRIPT.chmod(SCRIPT.stat().st_mode | stat.S_IXUSR)
     return subprocess.run(
-        [str(SCRIPT), "S3LineProcessorStack"],
+        [bash, str(SCRIPT), "S3LineProcessorStack"],
         cwd=ROOT,
         env=environment,
         capture_output=True,
@@ -30,11 +33,12 @@ def _run_mask_script(
 
 
 def test_plan_uses_mask_script_before_cdk_deploy() -> None:
-    assert "scripts/mask_stack_outputs.sh" in PLAN_JOB
-    assert PLAN_JOB.index("scripts/mask_stack_outputs.sh") < PLAN_JOB.index(
+    assert "bash scripts/mask_stack_outputs.sh" in PLAN_JOB
+    assert PLAN_JOB.index("bash scripts/mask_stack_outputs.sh") < PLAN_JOB.index(
         "npx cdk deploy S3LineProcessorStack"
     )
     assert "plan-evidence/mask_stack_outputs.sh" in PLAN_JOB
+    assert "chmod +x scripts/mask_stack_outputs.sh" not in PLAN_JOB
 
 
 def test_execute_reuses_mask_script_from_plan_evidence() -> None:
