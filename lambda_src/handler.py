@@ -299,7 +299,7 @@ def _safe_record_context(record: Any) -> dict[str, Any]:
             "sequencer": _bounded_string(object_record.get("sequencer")),
             "reported_object_size": _nonnegative_integer(object_record.get("size")),
         }
-    except KeyError, TypeError, UnicodeEncodeError:
+    except (KeyError, TypeError, UnicodeEncodeError):  # fmt: skip
         return {}
 
 
