@@ -6,8 +6,8 @@ Validate, deploy, observe, recover, and clean up this stack.
 
 ## Who should use this
 
-Maintainers, deployment approvers, and Identity Center smoke operators on
-Ubuntu/WSL or similar Linux.
+Maintainers, deployment approvers, and smoke operators on Ubuntu/WSL or similar
+Linux.
 
 ## What this does not do
 
@@ -19,7 +19,8 @@ controls. See [platform access](platform-access.md).
 - Git, GNU Make, Node.js 24+, AWS CLI v2, and either `uv` or Python 3.14.
 - Review: repository access and default-branch workflow checks.
 - Deploy approval: protected GitHub `production` environment.
-- Live ops: approved Identity Center profile for the intended account/region.
+- Live ops: approved temporary assumed-role profile for the intended
+  account/region.
 
 GitHub environment `production` is the deployment-control boundary. Current
 stack resources and application logs are tagged `Sandbox`.
@@ -104,16 +105,16 @@ artifact for the wrong commit or with unexplained IAM/replacement/deletion.
 
 ## Post-deploy smoke test
 
-Shared-account smoke uses a scoped Identity Center profile. This free-tier
-Sandbox has not provisioned Identity Center, so skip live smoke until it does.
-Local bootstrap or `cdk deploy` against the shared repository account is
-prohibited.
+Shared-account smoke uses a scoped temporary assumed-role profile. Identity
+Center is the preferred workforce path; this Sandbox may use an IAM role profile
+with `source_profile` until Identity Center exists. Local bootstrap or
+`cdk deploy` against the shared repository account is prohibited.
 
 ```bash
-aws sso login --profile <SMOKE_SSO_PROFILE>
-make smoke-check PROFILE=<SMOKE_SSO_PROFILE> REGION=<AWS_REGION>
+aws sts get-caller-identity --profile <SMOKE_PROFILE>
+make smoke-check PROFILE=<SMOKE_PROFILE> REGION=<AWS_REGION>
 # After explicit human authorization:
-make smoke PROFILE=<SMOKE_SSO_PROFILE> REGION=<AWS_REGION>
+make smoke PROFILE=<SMOKE_PROFILE> REGION=<AWS_REGION>
 ```
 
 `smoke-check` is read-only and does not prove S3 write or version cleanup.
@@ -122,9 +123,10 @@ before uploads, then deletes only the exact versions it created (including on
 mid-run failure). Permissions:
 [Smoke Operator contract](platform-access.md#smoke-operator-permission-contract).
 
-Expect nine application outcomes, no sensitive log fields, and created versions
-removed. On expired SSO, wrong stack/region, or a missing permission set, fix
-the scoped set; do not broaden access. If cleanup fails, delete only the printed
+Expect an `assumed-role/...` caller in the intended account, nine application
+outcomes, no sensitive log fields, and created versions removed. On expired
+credentials, wrong stack/region, or a missing role permission, fix the scoped
+role path; do not broaden access. If cleanup fails, delete only the printed
 prefix's exact version IDs. Never empty the bucket.
 
 ## Safe observation
@@ -263,8 +265,8 @@ Disposable developer account only. Never targets the shared repository account
 or replaces protected-main deployment.
 
 ```bash
-export PROFILE=<SANDBOX_SSO_PROFILE> REGION=<AWS_REGION>
-export SANDBOX_ACK=reviewer-owned
+export PROFILE=<SANDBOX_PROFILE> REGION=<AWS_REGION>
+export SANDBOX_ACK=developer-owned
 
 make setup && make aws-check && make bootstrap && make deploy
 make smoke-check && make smoke
