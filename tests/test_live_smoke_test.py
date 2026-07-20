@@ -7,6 +7,7 @@ import pytest
 from botocore.exceptions import (
     ClientError,
     NoCredentialsError,
+    ParamValidationError,
     ProfileNotFound,
     UnauthorizedSSOTokenError,
 )
@@ -18,6 +19,7 @@ OTHER_ACCOUNT = "999988887777"
 ROLE_ARN = f"arn:aws:sts::{ACCOUNT}:assumed-role/SmokeOperator/session"
 USER_ARN = f"arn:aws:iam::{ACCOUNT}:user/legacy-operator"
 ROOT_ARN = f"arn:aws:iam::{ACCOUNT}:root"
+MALFORMED_ROLE_ARN = f"arn:aws:iam::{ACCOUNT}:not-a-role"
 BUCKET = "example-bucket"
 LOG_GROUP = "/aws/lambda/example"
 
@@ -91,6 +93,16 @@ def _sso_session(
     session._cloudformation = cloudformation
     session._logs = logs
     session._s3 = s3
+    return session
+
+
+def _assume_role_session(*, account: str = ACCOUNT) -> MagicMock:
+    session = _sso_session(account=account, sso_account_id=None)
+    session._session.get_scoped_config.return_value = {
+        "role_arn": f"arn:aws:iam::{account}:role/S3LineProcessorSmokeOperator",
+        "source_profile": "s3-line-processor-operator",
+        "region": "us-west-2",
+    }
     return session
 
 
@@ -214,6 +226,7 @@ def test_validate_profile_rejects_documentation_placeholders(
 def test_validate_profile_allows_real_names_and_none() -> None:
     smoke.validate_profile(None)
     smoke.validate_profile("my-smoke-sso")
+    smoke.validate_profile("smoke-s3-line")
 
 
 def test_build_parser_accepts_check_only_and_cleanup() -> None:
@@ -228,13 +241,9 @@ def test_build_parser_accepts_check_only_and_cleanup() -> None:
 
 def test_require_temporary_assumed_role_rejects_user_and_root() -> None:
     smoke.require_temporary_assumed_role({"Arn": ROLE_ARN})
-    with pytest.raises(
-        smoke.SmokePreflightError, match="unsupported long-lived identity"
-    ):
+    with pytest.raises(smoke.SmokePreflightError, match="unsupported identity"):
         smoke.require_temporary_assumed_role({"Arn": USER_ARN})
-    with pytest.raises(
-        smoke.SmokePreflightError, match="unsupported long-lived identity"
-    ):
+    with pytest.raises(smoke.SmokePreflightError, match="unsupported identity"):
         smoke.require_temporary_assumed_role({"Arn": ROOT_ARN})
 
 
@@ -253,6 +262,64 @@ def test_check_only_accepts_identity_center_assumed_role(
     assert "s3" not in [call.args[0] for call in session.client.call_args_list]
 
 
+def test_check_only_accepts_source_profile_assumed_role(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    session = _assume_role_session()
+
+    code = smoke.main(
+        ["--check-only", "--profile", "smoke-s3-line", "--region", "us-west-2"],
+        session_factory=lambda **_: session,
+    )
+
+    assert code == 0
+    assert smoke.PREFLIGHT_PASSED in capsys.readouterr().out
+    assert "s3" not in [call.args[0] for call in session.client.call_args_list]
+
+
+def test_check_only_maps_param_validation_error_without_leaking_config(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    session = _assume_role_session()
+    session._sts.get_caller_identity.side_effect = ParamValidationError(
+        report=f"Invalid RoleArn: {MALFORMED_ROLE_ARN}"
+    )
+
+    code = smoke.main(
+        ["--check-only", "--profile", "smoke-s3-line"],
+        session_factory=lambda **_: session,
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "Local AWS configuration is invalid" in captured.err
+    for sensitive in (ACCOUNT, MALFORMED_ROLE_ARN):
+        assert sensitive not in captured.out
+        assert sensitive not in captured.err
+    assert "s3" not in [call.args[0] for call in session.client.call_args_list]
+
+
+def test_check_only_rejects_wrong_expected_account_override(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("SMOKE_EXPECTED_ACCOUNT", OTHER_ACCOUNT)
+    session = _assume_role_session()
+
+    code = smoke.main(
+        ["--check-only", "--profile", "smoke-s3-line"],
+        session_factory=lambda **_: session,
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "expected account mismatch" in captured.err
+    for sensitive in (ACCOUNT, OTHER_ACCOUNT):
+        assert sensitive not in captured.out
+        assert sensitive not in captured.err
+    assert "s3" not in [call.args[0] for call in session.client.call_args_list]
+
+
 @pytest.mark.parametrize(
     ("mutate", "message", "hide"),
     [
@@ -262,7 +329,7 @@ def test_check_only_accepts_identity_center_assumed_role(
                 "get_caller_identity",
                 MagicMock(return_value={"Account": ACCOUNT, "Arn": USER_ARN}),
             ),
-            "unsupported long-lived identity",
+            "unsupported identity",
             (ACCOUNT, USER_ARN),
         ),
         (
@@ -271,7 +338,7 @@ def test_check_only_accepts_identity_center_assumed_role(
                 "get_caller_identity",
                 MagicMock(return_value={"Account": ACCOUNT, "Arn": ROOT_ARN}),
             ),
-            "unsupported long-lived identity",
+            "unsupported identity",
             (ACCOUNT, ROOT_ARN),
         ),
         (
@@ -280,7 +347,16 @@ def test_check_only_accepts_identity_center_assumed_role(
                 "get_caller_identity",
                 MagicMock(side_effect=_client_error("ExpiredToken", "expired")),
             ),
-            "SSO session expired",
+            "Temporary smoke session expired",
+            (),
+        ),
+        (
+            lambda session: setattr(
+                session._sts,
+                "get_caller_identity",
+                MagicMock(side_effect=_client_error("AccessDenied", "denied")),
+            ),
+            "verify the role trust and sts:AssumeRole permission",
             (),
         ),
         (
@@ -486,12 +562,40 @@ def test_complete_modern_and_legacy_sso_configurations_are_accepted(
     assert smoke.profile_uses_identity_center(config) is True
 
 
+def test_assume_role_profile_resolves_expected_account_from_role_arn() -> None:
+    config = {
+        "role_arn": f"arn:aws:iam::{ACCOUNT}:role/S3LineProcessorSmokeOperator",
+        "source_profile": "s3-line-processor-operator",
+    }
+
+    assert smoke.profile_uses_assume_role(config) is True
+    assert smoke.resolve_expected_account(config, environ={}) == ACCOUNT
+
+
+def test_assume_role_profile_expected_account_can_be_pinned_by_env() -> None:
+    config = {
+        "role_arn": f"arn:aws:iam::{ACCOUNT}:role/S3LineProcessorSmokeOperator",
+    }
+
+    assert (
+        smoke.resolve_expected_account(
+            config,
+            environ={"SMOKE_EXPECTED_ACCOUNT": OTHER_ACCOUNT},
+        )
+        == OTHER_ACCOUNT
+    )
+
+
 @pytest.mark.parametrize(
     ("exc", "needle"),
     [
         (ProfileNotFound(profile="missing"), "AWS profile not found"),
         (NoCredentialsError(), "AWS credentials unavailable"),
-        (UnauthorizedSSOTokenError(), "SSO session expired"),
+        (UnauthorizedSSOTokenError(), "Temporary smoke session expired"),
+        (
+            ParamValidationError(report=f"Invalid RoleArn: {MALFORMED_ROLE_ARN}"),
+            "Local AWS configuration is invalid",
+        ),
     ],
 )
 def test_session_setup_errors_are_human_readable(
@@ -509,7 +613,9 @@ def test_session_setup_errors_are_human_readable(
     captured = capsys.readouterr()
     assert code == 1
     assert needle in captured.err
-    assert ACCOUNT not in captured.err
+    for sensitive in (ACCOUNT, MALFORMED_ROLE_ARN):
+        assert sensitive not in captured.out
+        assert sensitive not in captured.err
 
 
 def test_prefix_is_printed_before_first_upload(

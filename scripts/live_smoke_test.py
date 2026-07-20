@@ -20,6 +20,7 @@ from botocore.exceptions import (
     ConfigParseError,
     InvalidConfigError,
     NoCredentialsError,
+    ParamValidationError,
     PartialCredentialsError,
     ProfileNotFound,
     SSOTokenLoadError,
@@ -41,25 +42,32 @@ DOC_PLACEHOLDER_PROFILES = frozenset(
         "DEPLOY_PROFILE",
         "YOUR_OPERATOR_PROFILE",
         "SMOKE_SSO_PROFILE",
+        "SMOKE_PROFILE",
     }
 )
 PREFLIGHT_PASSED = (
     "Read-only smoke preflight passed. S3 write and version-cleanup "
     "permissions remain unproven until an authorized smoke run."
 )
-SSO_SESSION_EXPIRED = (
-    "SSO session expired. Run `aws sso login --profile <SSO_PROFILE>` and retry."
+TEMPORARY_SESSION_EXPIRED = (
+    "Temporary smoke session expired. Refresh the smoke profile and retry."
+)
+TEMPORARY_PROFILE_UNAVAILABLE = (
+    "Unable to use the smoke profile. Refresh its credentials or verify the "
+    "role trust and sts:AssumeRole permission."
 )
 AWS_PROFILE_NOT_FOUND = (
-    "AWS profile not found. Configure an Identity Center SSO profile and retry."
+    "AWS profile not found. Configure an approved smoke profile and retry."
 )
 AWS_CONFIG_INVALID = (
     "Local AWS configuration is invalid or incomplete. "
-    "Fix the SSO profile configuration and retry."
+    "Fix the smoke profile configuration and retry."
 )
 AWS_CREDENTIALS_MISSING = (
-    "AWS credentials unavailable. "
-    "Run `aws sso login --profile <SSO_PROFILE>` and retry."
+    "AWS credentials unavailable. Log in or refresh the source profile, then retry."
+)
+TEMPORARY_PROFILE_REQUIRED = (
+    "unsupported identity; use an approved temporary assumed-role profile"
 )
 
 
@@ -125,7 +133,7 @@ def validate_profile(profile: str | None) -> None:
     if profile in DOC_PLACEHOLDER_PROFILES:
         print(
             f"--profile {profile!r} is a documentation placeholder. "
-            "Use your configured Identity Center SSO profile name.",
+            "Use your configured smoke profile name.",
             file=sys.stderr,
         )
         raise SystemExit(2)
@@ -134,11 +142,11 @@ def validate_profile(profile: str | None) -> None:
 def require_temporary_assumed_role(identity: Mapping[str, Any]) -> None:
     arn = str(identity.get("Arn", ""))
     if arn.endswith(":root"):
-        raise SmokePreflightError("unsupported long-lived identity")
+        raise SmokePreflightError(TEMPORARY_PROFILE_REQUIRED)
     if ":user/" in arn:
-        raise SmokePreflightError("unsupported long-lived identity")
+        raise SmokePreflightError(TEMPORARY_PROFILE_REQUIRED)
     if ":assumed-role/" not in arn:
-        raise SmokePreflightError("unsupported long-lived identity")
+        raise SmokePreflightError(TEMPORARY_PROFILE_REQUIRED)
 
 
 def scoped_profile_config(session: Any) -> Mapping[str, Any]:
@@ -165,6 +173,19 @@ def profile_uses_identity_center(config: Mapping[str, Any]) -> bool:
     return has_account and has_role and has_session
 
 
+def profile_uses_assume_role(config: Mapping[str, Any]) -> bool:
+    return bool(str(config.get("role_arn") or "").strip())
+
+
+def _account_from_role_arn(role_arn: str) -> str | None:
+    parts = role_arn.split(":")
+    if len(parts) >= 6 and parts[0] == "arn" and parts[2] == "iam":
+        account = parts[4]
+        if account.isdigit() and len(account) == 12:
+            return account
+    return None
+
+
 def resolve_expected_account(
     config: Mapping[str, Any],
     *,
@@ -177,6 +198,9 @@ def resolve_expected_account(
     configured = config.get("sso_account_id")
     if configured:
         return str(configured).strip() or None
+    role_account = _account_from_role_arn(str(config.get("role_arn") or ""))
+    if role_account:
+        return role_account
     return None
 
 
@@ -184,19 +208,24 @@ def call_aws_preflight(operation: Any, *, failure_message: str) -> Any:
     """Run one AWS read and map failures to safe operator messages."""
     try:
         return operation()
+    except ParamValidationError as exc:
+        raise SmokePreflightError(AWS_CONFIG_INVALID) from exc
     except (TokenRetrievalError, UnauthorizedSSOTokenError, SSOTokenLoadError) as exc:
-        raise SmokePreflightError(SSO_SESSION_EXPIRED) from exc
+        raise SmokePreflightError(TEMPORARY_SESSION_EXPIRED) from exc
     except ClientError as exc:
         code = str(exc.response.get("Error", {}).get("Code", ""))
         if code in {"ExpiredToken", "ExpiredTokenException", "RequestExpired"}:
-            raise SmokePreflightError(SSO_SESSION_EXPIRED) from exc
+            raise SmokePreflightError(TEMPORARY_SESSION_EXPIRED) from exc
         raise SmokePreflightError(failure_message) from exc
 
 
 def map_session_setup_error(exc: BaseException) -> SmokePreflightError:
     if isinstance(exc, ProfileNotFound):
         return SmokePreflightError(AWS_PROFILE_NOT_FOUND)
-    if isinstance(exc, (ConfigNotFound, ConfigParseError, InvalidConfigError)):
+    if isinstance(
+        exc,
+        (ConfigNotFound, ConfigParseError, InvalidConfigError, ParamValidationError),
+    ):
         return SmokePreflightError(AWS_CONFIG_INVALID)
     if isinstance(
         exc,
@@ -211,7 +240,7 @@ def map_session_setup_error(exc: BaseException) -> SmokePreflightError:
         exc,
         (TokenRetrievalError, UnauthorizedSSOTokenError, SSOTokenLoadError),
     ):
-        return SmokePreflightError(SSO_SESSION_EXPIRED)
+        return SmokePreflightError(TEMPORARY_SESSION_EXPIRED)
     if isinstance(exc, SmokePreflightError):
         return exc
     raise exc
@@ -222,6 +251,7 @@ SESSION_SETUP_ERRORS = (
     ConfigNotFound,
     ConfigParseError,
     InvalidConfigError,
+    ParamValidationError,
     NoCredentialsError,
     PartialCredentialsError,
     UnknownCredentialError,
@@ -298,7 +328,6 @@ def run_preflight(
     session: Any,
     *,
     stack_name: str,
-    require_identity_center: bool = True,
     environ: Mapping[str, str] | None = None,
     sts_client: Any | None = None,
     cloudformation_client: Any | None = None,
@@ -312,12 +341,12 @@ def run_preflight(
 
     identity = call_aws_preflight(
         sts.get_caller_identity,
-        failure_message=SSO_SESSION_EXPIRED,
+        failure_message=TEMPORARY_PROFILE_UNAVAILABLE,
     )
 
     require_temporary_assumed_role(identity)
-    if require_identity_center and not profile_uses_identity_center(config):
-        raise SmokePreflightError("unsupported long-lived identity")
+    if not (profile_uses_identity_center(config) or profile_uses_assume_role(config)):
+        raise SmokePreflightError(TEMPORARY_PROFILE_REQUIRED)
 
     expected_account = resolve_expected_account(config, environ=environ)
     actual_account = str(identity.get("Account", "")).strip()
@@ -333,14 +362,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Post-deploy smoke matrix against the live stack. "
-            "--profile must be a real Identity Center SSO profile, "
+            "--profile must be a real temporary assumed-role profile, "
             "not a docs placeholder."
         )
     )
     parser.add_argument(
         "--profile",
         help=(
-            "Local AWS CLI SSO profile name (not SMOKE_SSO_PROFILE). "
+            "Local AWS CLI smoke profile name (not SMOKE_PROFILE). "
             "Required for --check-only."
         ),
     )
@@ -356,7 +385,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--check-only",
         action="store_true",
         help=(
-            "Read-only Identity Center preflight only. "
+            "Read-only temporary-identity preflight only. "
             "Does not prove S3 write or version-cleanup permissions."
         ),
     )
@@ -586,7 +615,7 @@ def main(
 
     if args.check_only and not args.profile:
         print(
-            "Usage: live_smoke_test.py --check-only --profile <SSO_PROFILE>",
+            "Usage: live_smoke_test.py --check-only --profile <SMOKE_PROFILE>",
             file=sys.stderr,
         )
         return 2

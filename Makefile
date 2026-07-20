@@ -25,10 +25,10 @@ help:
 	@echo "make bootstrap PROFILE=<profile>        Bootstrap a developer-owned sandbox (ack required)"
 	@echo "make diff PROFILE=<profile>             Review the live CDK diff"
 	@echo "make deploy PROFILE=<profile>           check + diff + developer-owned sandbox deploy (ack required)"
-	@echo "make smoke-check PROFILE=<sso-profile>  Read-only Identity Center smoke preflight"
-	@echo "make smoke PROFILE=<sso-profile>        Authorized live AWS smoke (write-capable)"
+	@echo "make smoke-check PROFILE=<smoke-profile> Read-only assumed-role smoke preflight"
+	@echo "make smoke PROFILE=<smoke-profile>       Authorized live AWS smoke (write-capable)"
 	@echo ""
-	@echo "Local bootstrap/deploy require: SANDBOX_ACK=reviewer-owned"
+	@echo "Local bootstrap/deploy require: SANDBOX_ACK=developer-owned"
 	@echo "Optional smoke account pin: EXPECTED_ACCOUNT=<account-id>"
 
 setup:
@@ -83,12 +83,15 @@ aws-check:
 	aws sts get-caller-identity --profile "$(PROFILE)" --region "$(REGION)"
 
 sandbox-ack:
-	@test "$(SANDBOX_ACK)" = "reviewer-owned" || { \
+	@case "$(SANDBOX_ACK)" in \
+		developer-owned|reviewer-owned) exit 0 ;; \
+		*) \
 		echo "Refusing a local AWS write."; \
 		echo "Use the protected GitHub Deploy workflow for the repository stack."; \
-		echo "For your own sandbox, add: SANDBOX_ACK=reviewer-owned"; \
+		echo "For your own sandbox, add: SANDBOX_ACK=developer-owned"; \
 		exit 2; \
-	}
+		;; \
+	esac
 
 bootstrap: sandbox-ack aws-check
 	@test -x "$(PY)" || { echo "Missing $(PY). Run: make setup"; exit 1; }
@@ -108,7 +111,7 @@ deploy: sandbox-ack check diff
 smoke-check:
 	@test -x "$(PY)" || { echo "Missing $(PY). Run: make setup"; exit 1; }
 	@test -n "$(PROFILE)" || { \
-		echo "Usage: make smoke-check PROFILE=<SMOKE_SSO_PROFILE> [REGION=$(REGION)] [STACK=$(STACK)] [EXPECTED_ACCOUNT=<account-id>]"; \
+		echo "Usage: make smoke-check PROFILE=<SMOKE_PROFILE> [REGION=$(REGION)] [STACK=$(STACK)] [EXPECTED_ACCOUNT=<account-id>]"; \
 		echo "Read-only preflight only; does not authorize or run make smoke."; \
 		exit 2; \
 	}
@@ -121,8 +124,8 @@ smoke-check:
 smoke:
 	@test -x "$(PY)" || { echo "Missing $(PY). Run: make setup"; exit 1; }
 	@test -n "$(PROFILE)" || { \
-		echo "Usage: make smoke PROFILE=<SMOKE_SSO_PROFILE>"; \
-		echo "PROFILE must be an approved Identity Center SSO profile, not a docs placeholder."; \
+		echo "Usage: make smoke PROFILE=<SMOKE_PROFILE>"; \
+		echo "PROFILE must be an approved temporary assumed-role profile, not a docs placeholder."; \
 		echo "Run make smoke-check first; obtain explicit authorization before this write-capable target."; \
 		exit 2; \
 	}

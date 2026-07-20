@@ -24,7 +24,7 @@ boundaries in order:
 
 | Boundary | Owner | Required now | Tighten later |
 | --- | --- | --- | --- |
-| Human AWS access | AWS account owner | Identity Center groups and temporary sessions | Remove old keys after SSO works |
+| Human AWS access | AWS account owner | Identity Center or scoped role assumption | Retire source keys after replacement access works |
 | CDK bootstrap | Platform administrator | Approved execution policy and protection | Review as CDK requirements change |
 | GitHub OIDC | Platform owner | Exact audience, subject, and short session | Split plan/execute roles for production |
 | GitHub controls | Repository administrator | PR, `validate`, frozen-plan approvals | Add independent review when a second maintainer exists |
@@ -33,8 +33,9 @@ boundaries in order:
 Do not create a control before its owner, role, or recovery owner exists.
 Root and long-lived IAM users are not routine maintenance identities.
 
-This free-tier Sandbox has not provisioned Identity Center yet. Keep the Smoke
-Operator contract below as the target; defer live SSO smoke until it exists.
+This free-tier Sandbox may use IAM role assumption before Identity Center is
+available. The smoke script still rejects IAM-user/root sessions; the effective
+caller must be `assumed-role/...`.
 
 ## IAM Identity Center
 
@@ -50,10 +51,11 @@ through groups, and records an accountable owner. See
 
 ### Smoke Operator permission contract
 
-Provision a short-session Identity Center permission set via a group. Resolve
-the live log-group physical ID privately from the application stack when
-building the set; never copy physical names, ARNs, or account IDs into public
-docs.
+Provision this as a short-session Identity Center permission set, or as a
+dedicated IAM role assumed from a narrow source profile while this remains a
+Sandbox. Resolve the live log-group physical ID privately from the application
+stack when building the set; never copy physical names, ARNs, or account IDs
+into public docs.
 
 | Action | Resource scope (placeholders) |
 | --- | --- |
@@ -66,10 +68,66 @@ docs.
 Include non-`.json` keys under the smoke prefix (the matrix uploads `test.txt`).
 Do not grant deploy, bootstrap, IAM, Lambda, SSM, S3 list/read, broad
 `incoming/*` cleanup, `s3:DeleteObject` without version IDs, or CloudFormation
-mutation. Disable legacy IAM-user smoke credentials only after an authorized
-Identity Center `make smoke` succeeds and ownership is confirmed.
+mutation.
 
-### Configure and verify a profile
+### Sandbox assumed-role profile
+
+Without Identity Center, the account owner can create a private role with the
+five-action contract above. Configure both sides with exact ARNs; never use a
+wildcard principal or role resource.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "<SOURCE_PRINCIPAL_ARN>"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+
+The source identity needs only:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": "<SMOKE_ROLE_ARN>"
+    }
+  ]
+}
+```
+
+Local profile:
+
+```ini
+[profile smoke-s3-line]
+role_arn = arn:aws:iam::<ACCOUNT_ID>:role/S3LineProcessorSmokeOperator
+source_profile = <SOURCE_PROFILE>
+region = <AWS_REGION>
+```
+
+```bash
+aws sts get-caller-identity --profile smoke-s3-line
+make smoke-check PROFILE=smoke-s3-line REGION=<AWS_REGION>
+```
+
+Expect `assumed-role/S3LineProcessorSmokeOperator/...` in the intended account.
+Access denied means the trust, source permission, or five-action role policy is
+incomplete. Stop on root, IAM-user, wrong account, or broader access. After an
+authorized smoke succeeds, remove direct application permissions from the
+source user. Disable its credentials only after replacement access works. See
+[AWS CLI role profiles](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-role.html).
+
+### Configure and verify an Identity Center profile
 
 ```bash
 aws configure sso --profile <SSO_PROFILE>
@@ -79,8 +137,9 @@ aws configure get region --profile <SSO_PROFILE>
 ```
 
 Expect the intended account and assumed role with an approved region. Refresh
-expired sessions with `aws sso login`; do not substitute access keys. Stop on
-the wrong account, root/IAM-user ARN, or a broader-than-approved set.
+expired SSO sessions with `aws sso login`; refresh source-profile credentials
+only if they are the approved path to assume the smoke role. Stop on the wrong
+account, root/IAM-user ARN, or a broader-than-approved set.
 
 ### Access lifecycle
 
@@ -112,7 +171,7 @@ npx cdk bootstrap aws://<ACCOUNT_ID>/<AWS_REGION> \
   --cloudformation-execution-policies <EXECUTION_POLICY_ARN>
 ```
 
-`make bootstrap PROFILE=<SSO_PROFILE> SANDBOX_ACK=reviewer-owned` is only for a
+`make bootstrap PROFILE=<SSO_PROFILE> SANDBOX_ACK=developer-owned` is only for a
 developer's own disposable sandbox (CDK defaults).
 
 ```bash

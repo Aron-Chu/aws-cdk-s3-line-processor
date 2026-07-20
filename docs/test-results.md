@@ -19,11 +19,10 @@ Before citing a result, compare its commit with current `main` and distinguish:
 
 ## Current smoke posture (July 19, 2026)
 
-`make smoke-check` / `make smoke` are on `main` and require an Identity Center
-assumed-role profile. This free-tier Sandbox did not provision Identity Center,
-so no live 9/9 smoke is recorded. Do not treat smoke as fixed until that run
-exists. Local proof remains `make check`; IAM-user profiles are rejected by
-design.
+The smoke commands require a temporary assumed-role profile. Identity Center is
+the preferred workforce path; this Sandbox may use role assumption until it is
+available. No current live 9/9 smoke is recorded. Local proof remains
+`make check`; direct IAM-user/root sessions are rejected by design.
 
 ## Merged documentation and GitOps update (July 19, 2026)
 
