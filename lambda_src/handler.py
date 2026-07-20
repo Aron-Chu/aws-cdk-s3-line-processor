@@ -6,6 +6,13 @@ from typing import Any
 from urllib.parse import unquote_plus
 
 import boto3
+from botocore.config import Config
+from botocore.exceptions import (
+    ClientError,
+    ConnectTimeoutError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 
 MAX_FILE_BYTES = int(os.environ.get("MAX_FILE_BYTES", 1024 * 1024))
 SERVICE_NAME = os.environ.get("SERVICE_NAME", "s3-line-processor")
@@ -13,12 +20,43 @@ ENVIRONMENT = os.environ.get("ENVIRONMENT", "sandbox")
 LOG_SCHEMA_VERSION = 2
 MAX_LOG_METADATA_BYTES = 1024
 
+# Keep S3 attempt budget inside the Lambda's 15-second timeout so the handler
+# can still emit a safe failure record before the runtime hard-stops.
+S3_CLIENT_CONFIG = Config(
+    connect_timeout=2,
+    read_timeout=5,
+    retries={
+        "mode": "standard",
+        "total_max_attempts": 2,
+    },
+)
+
+_ACCESS_DENIED_CODES = frozenset({"AccessDenied", "AccessDeniedException"})
+_OBJECT_UNAVAILABLE_CODES = frozenset({"NoSuchKey", "NoSuchVersion", "NotFound"})
+_TIMEOUT_CODES = frozenset({"RequestTimeout", "RequestTimeoutException"})
+_SERVICE_UNAVAILABLE_CODES = frozenset(
+    {
+        "SlowDown",
+        "Throttling",
+        "ThrottlingException",
+        "ServiceUnavailable",
+        "RequestLimitExceeded",
+        "ProvisionedThroughputExceededException",
+    }
+)
+_SERVICE_ERROR_CODES = frozenset({"InternalError", "InternalServerError"})
+_TIMEOUT_EXCEPTIONS = (
+    ConnectTimeoutError,
+    ReadTimeoutError,
+    EndpointConnectionError,
+)
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 logging.getLogger("botocore").setLevel(logging.WARNING)
 logging.getLogger("boto3").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
-s3_client = boto3.client("s3")
+s3_client = boto3.client("s3", config=S3_CLIENT_CONFIG)
 
 
 class ValidationError(ValueError):
@@ -88,8 +126,13 @@ def process_s3_record(record: dict[str, Any]) -> dict[str, Any]:
 
     if not isinstance(bucket_name, str) or not isinstance(encoded_key, str):
         raise ValidationError("invalid_s3_record")
+    if not _is_utf8_text(bucket_name) or not _is_utf8_text(encoded_key):
+        raise ValidationError("invalid_s3_record")
 
     object_key = unquote_plus(encoded_key)
+    if not _is_utf8_text(object_key):
+        raise ValidationError("invalid_s3_record")
+
     raw_version_id = object_record.get("versionId")
     version_id = _normalized_version_id(raw_version_id)
     if raw_version_id is not None and version_id is None and raw_version_id != "null":
@@ -156,13 +199,22 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     records = event.get("Records") if isinstance(event, dict) else None
     if not isinstance(records, list) or not records:
-        raise ValueError("Records must be a non-empty list")
+        failure = {
+            "status": "failed",
+            "failure_code": "invalid_event_envelope",
+            "error_type": "OperationalError",
+        }
+        if request_id:
+            failure["request_id"] = request_id
+        logger.error(_serialize_log(failure))
+        raise OperationalError("invalid_invocation_event") from None
 
     results = []
 
     for record in records:
-        safe_context = _safe_record_context(record)
+        safe_context: dict[str, Any] = {}
         try:
+            safe_context = _safe_record_context(record)
             result = process_s3_record(record)
         except ValidationError as error:
             result = {
@@ -179,6 +231,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         except Exception as error:
             failure = {
                 "status": "failed",
+                "failure_code": _operational_failure_code(error),
                 "error_type": type(error).__name__,
                 **safe_context,
             }
@@ -195,6 +248,34 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     return {"results": results}
 
 
+def _operational_failure_code(error: BaseException) -> str:
+    if isinstance(error, _TIMEOUT_EXCEPTIONS):
+        return "s3_timeout"
+
+    if not isinstance(error, ClientError):
+        return "unexpected_error"
+
+    response = error.response if isinstance(error.response, dict) else {}
+    error_info = response.get("Error")
+    error_info = error_info if isinstance(error_info, dict) else {}
+    code = error_info.get("Code")
+    metadata = response.get("ResponseMetadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    status = metadata.get("HTTPStatusCode")
+
+    if code in _ACCESS_DENIED_CODES:
+        return "s3_access_denied"
+    if code in _OBJECT_UNAVAILABLE_CODES:
+        return "s3_object_unavailable"
+    if code in _TIMEOUT_CODES:
+        return "s3_timeout"
+    if code in _SERVICE_UNAVAILABLE_CODES or status == 503:
+        return "s3_service_unavailable"
+    if code in _SERVICE_ERROR_CODES or (isinstance(status, int) and status >= 500):
+        return "s3_service_error"
+    return "unexpected_error"
+
+
 def _safe_record_context(record: Any) -> dict[str, Any]:
     if not isinstance(record, dict):
         return {}
@@ -209,21 +290,31 @@ def _safe_record_context(record: Any) -> dict[str, Any]:
         object_key = unquote_plus(encoded_key) if isinstance(encoded_key, str) else None
         bucket_name = bucket_record.get("name")
         version_id = _normalized_version_id(object_record.get("versionId"))
-        object_ref = (
-            _object_reference(bucket_name, object_key, version_id)
-            if isinstance(bucket_name, str)
+        object_ref = None
+        if (
+            isinstance(bucket_name, str)
             and isinstance(object_key, str)
+            and _is_utf8_text(bucket_name)
+            and _is_utf8_text(object_key)
             and (version_id is None or isinstance(version_id, str))
-            else None
-        )
+        ):
+            object_ref = _object_reference(bucket_name, object_key, version_id)
         return {
             "object_ref": object_ref,
             "version_id": version_id,
             "sequencer": _bounded_string(object_record.get("sequencer")),
             "reported_object_size": _nonnegative_integer(object_record.get("size")),
         }
-    except (KeyError, TypeError):  # fmt: skip
+    except KeyError, TypeError, UnicodeEncodeError:
         return {}
+
+
+def _is_utf8_text(value: str) -> bool:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def _bounded_string(value: Any) -> str | None:
